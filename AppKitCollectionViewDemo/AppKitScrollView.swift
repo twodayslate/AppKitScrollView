@@ -459,15 +459,22 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         pendingAnimatedMeasurements.removeAll(keepingCapacity: false)
     }
 
-    /// Re-measures visible rows at a few checkpoints so AppKit height updates track a short SwiftUI expansion animation.
+    /// Re-measures visible rows across a short burst so AppKit height updates track SwiftUI expansion closely enough
+    /// to avoid visible step changes in neighboring rows.
     private func animateVisibleLayout(duration: TimeInterval) {
         cancelAnimatedMeasurements()
-        remeasureVisibleItems(forceAll: true, extraScreens: 0.75)
+        let extraScreens: CGFloat = 0.4
+        remeasureVisibleItems(forceAll: true, extraScreens: extraScreens)
 
-        let checkpoints = [0.35, 0.8].map { duration * $0 }
+        let frameInterval = 1.0 / 30.0
+        let checkpointCount = max(Int(ceil(duration / frameInterval)), 1)
+        let checkpoints = (1...checkpointCount).map { step in
+            duration * (Double(step) / Double(checkpointCount))
+        }
+
         pendingAnimatedMeasurements = checkpoints.map { delay in
             let workItem = DispatchWorkItem { [weak self] in
-                self?.remeasureVisibleItems(forceAll: true, extraScreens: 0.75)
+                self?.remeasureVisibleItems(forceAll: true, extraScreens: extraScreens)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
             return workItem

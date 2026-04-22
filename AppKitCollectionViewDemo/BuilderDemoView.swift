@@ -408,10 +408,9 @@ private struct TrendPanelRow: View {
     @State private var rendersTrendSection = false
     @State private var trendRevealProgress: CGFloat = 0
     @State private var trendContentHeight: CGFloat = 0
-    @State private var pendingHideTask: Task<Void, Never>?
 
-    private let trendAnimation = Animation.snappy(duration: 0.3, extraBounce: 0.02)
-    private let trendAnimationDuration: TimeInterval = 0.3
+    private let trendAnimation = Animation.easeInOut(duration: 0.34)
+    private let trendAnimationDuration: TimeInterval = 0.34
     private var fallbackTrendContentHeight: CGFloat {
         max(CGFloat(model.bars.count) * 30 - 8, 44)
     }
@@ -441,73 +440,76 @@ private struct TrendPanelRow: View {
                     .foregroundStyle(accent)
                 }
 
-                HStack(spacing: 10) {
-                    ForEach(model.metrics) { metric in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(metric.title)
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(.secondary)
-                            Text(metric.value)
-                                .font(.system(size: 20, weight: .bold, design: .rounded))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(accent.opacity(0.12))
-                        )
-                    }
-                }
-
-                if rendersTrendSection {
-                    let measuredTrendSection = VStack(spacing: 12) {
-                        ForEach(Array(model.bars.enumerated()), id: \.offset) { index, value in
-                            HStack(spacing: 14) {
-                                Text("Row \(index + 1)")
-                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                    .frame(width: 52, alignment: .leading)
-
-                                GeometryReader { proxy in
-                                    ZStack(alignment: .leading) {
-                                        Capsule(style: .continuous)
-                                            .fill(Color.white.opacity(0.08))
-                                        Capsule(style: .continuous)
-                                            .fill(accent)
-                                            .frame(width: max(proxy.size.width * value * trendRevealProgress, 0))
-                                    }
-                                }
-                                .frame(height: 12)
-
-                                Text("\(Int(value * 100))")
-                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 10) {
+                        ForEach(model.metrics) { metric in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(metric.title)
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 32, alignment: .trailing)
+                                Text(metric.value)
+                                    .font(.system(size: 20, weight: .bold, design: .rounded))
                             }
-                            .opacity(trendRevealProgress)
-                            .offset(y: (1 - trendRevealProgress) * -8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(accent.opacity(0.12))
+                            )
                         }
                     }
-                    .padding(.top, 4)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(key: TrendSectionHeightPreferenceKey.self, value: proxy.size.height)
-                        }
-                    )
 
-                    measuredTrendSection
-                    .clipped()
-                    .frame(
-                        height: max(trendContentHeight, fallbackTrendContentHeight) * trendRevealProgress,
-                        alignment: .top
-                    )
-                    .opacity(trendRevealProgress)
-                    .scaleEffect(y: max(0.001, 0.985 + (0.015 * trendRevealProgress)), anchor: .top)
-                    .onPreferenceChange(TrendSectionHeightPreferenceKey.self) { height in
-                        guard abs(trendContentHeight - height) > 0.5 else {
-                            return
-                        }
+                    if rendersTrendSection {
+                        let measuredTrendSection = VStack(spacing: 12) {
+                            ForEach(Array(model.bars.enumerated()), id: \.offset) { index, value in
+                                HStack(spacing: 14) {
+                                    Text("Row \(index + 1)")
+                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                        .frame(width: 52, alignment: .leading)
 
-                        trendContentHeight = height
+                                    GeometryReader { proxy in
+                                        ZStack(alignment: .leading) {
+                                            Capsule(style: .continuous)
+                                                .fill(Color.white.opacity(0.08))
+                                            Capsule(style: .continuous)
+                                                .fill(accent)
+                                                .frame(width: max(proxy.size.width * value * trendRevealProgress, 0))
+                                        }
+                                    }
+                                    .frame(height: 12)
+
+                                    Text("\(Int(value * 100))")
+                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 32, alignment: .trailing)
+                                }
+                                .opacity(trendRevealProgress)
+                                .offset(y: (1 - trendRevealProgress) * -8)
+                            }
+                        }
+                        .padding(.top, 4)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(key: TrendSectionHeightPreferenceKey.self, value: proxy.size.height)
+                            }
+                        )
+
+                        measuredTrendSection
+                            .padding(.top, 14 * trendRevealProgress)
+                            .frame(
+                                height: (max(trendContentHeight, fallbackTrendContentHeight) * trendRevealProgress) + (14 * trendRevealProgress),
+                                alignment: .top
+                            )
+                            .clipped()
+                            .opacity(trendRevealProgress)
+                            .scaleEffect(y: max(0.001, 0.985 + (0.015 * trendRevealProgress)), anchor: .top)
+                            .onPreferenceChange(TrendSectionHeightPreferenceKey.self) { height in
+                                guard abs(trendContentHeight - height) > 0.5 else {
+                                    return
+                                }
+
+                                trendContentHeight = height
+                            }
                     }
                 }
             }
@@ -516,19 +518,12 @@ private struct TrendPanelRow: View {
             rendersTrendSection = model.showsTrend
             trendRevealProgress = model.showsTrend ? 1 : 0
         }
-        .onDisappear {
-            pendingHideTask?.cancel()
-            pendingHideTask = nil
-        }
         .onChange(of: model.showsTrend) { _, showsTrend in
             applyTrendVisibility(showsTrend)
         }
     }
 
     private func applyTrendVisibility(_ showsTrend: Bool) {
-        pendingHideTask?.cancel()
-        pendingHideTask = nil
-
         if showsTrend {
             if !rendersTrendSection {
                 rendersTrendSection = true
@@ -548,17 +543,6 @@ private struct TrendPanelRow: View {
             trendRevealProgress = 0
         }
         scrollContext?.animateLayout(duration: trendAnimationDuration)
-
-        pendingHideTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(Int(trendAnimationDuration * 1000)))
-            guard !model.showsTrend else {
-                return
-            }
-
-            rendersTrendSection = false
-            scrollContext?.invalidateLayout()
-            pendingHideTask = nil
-        }
     }
 }
 
