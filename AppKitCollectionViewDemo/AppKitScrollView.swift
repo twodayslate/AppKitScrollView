@@ -43,9 +43,9 @@ private final class FlexibleHostedCollectionView: NSCollectionView {
 /// Lightweight configuration surface for the result-builder-backed AppKit collection view.
 @available(macOS 15.0, *)
 @MainActor
-final class AppKitScrollViewContext: ObservableObject {
+public final class AppKitScrollViewContext: ObservableObject {
     /// Conservative starting height used before a visible row has been measured.
-    private(set) var estimatedRowHeight: CGFloat = 132
+    public private(set) var estimatedRowHeight: CGFloat = 132
 
     private var scrollToItemHandler: ((AnyHashable, UnitPoint?) -> Void)?
     private var scrollToTopHandler: ((UnitPoint?) -> Void)?
@@ -54,27 +54,27 @@ final class AppKitScrollViewContext: ObservableObject {
     private var animateLayoutHandler: ((TimeInterval) -> Void)?
 
     /// Scrolls to the first hosted row whose identifier matches the supplied value.
-    func scrollTo<ID: Hashable>(_ id: ID, anchor: UnitPoint? = nil) {
+    public func scrollTo<ID: Hashable>(_ id: ID, anchor: UnitPoint? = nil) {
         scrollToItemHandler?(AnyHashable(id), anchor)
     }
 
     /// Scrolls to the top-most hosted row.
-    func scrollToTop(anchor: UnitPoint? = .top) {
+    public func scrollToTop(anchor: UnitPoint? = .top) {
         scrollToTopHandler?(anchor)
     }
 
     /// Scrolls to the bottom-most hosted row.
-    func scrollToBottom(anchor: UnitPoint? = .bottom) {
+    public func scrollToBottom(anchor: UnitPoint? = .bottom) {
         scrollToBottomHandler?(anchor)
     }
 
     /// Requests a fresh visible-row measurement pass after local SwiftUI state changes row height.
-    func invalidateLayout() {
+    public func invalidateLayout() {
         invalidateLayoutHandler?()
     }
 
     /// Coordinates a short burst of visible-row remeasurement alongside a SwiftUI animation.
-    func animateLayout(duration: TimeInterval = 0.26) {
+    public func animateLayout(duration: TimeInterval = 0.26) {
         animateLayoutHandler?(duration)
     }
 
@@ -100,7 +100,7 @@ private struct AppKitScrollViewContextEnvironmentKey: EnvironmentKey {
 }
 
 @available(macOS 15.0, *)
-extension EnvironmentValues {
+public extension EnvironmentValues {
     /// Exposes the current AppKit scroll proxy to child views that need to trigger relayout or scrolling.
     var appKitScrollViewContext: AppKitScrollViewContext? {
         get { self[AppKitScrollViewContextEnvironmentKey.self] }
@@ -108,22 +108,26 @@ extension EnvironmentValues {
     }
 }
 
+private struct AppKitScrollTargetID: @unchecked Sendable {
+    let rawValue: AnyHashable
+}
+
 private struct AppKitScrollTargetContainerKey: ContainerValueKey {
-    static let defaultValue: AnyHashable? = nil
+    static let defaultValue: AppKitScrollTargetID? = nil
 }
 
 private extension ContainerValues {
-    var appKitScrollTargetID: AnyHashable? {
+    var appKitScrollTargetID: AppKitScrollTargetID? {
         get { self[AppKitScrollTargetContainerKey.self] }
         set { self[AppKitScrollTargetContainerKey.self] = newValue }
     }
 }
 
 @available(macOS 15.0, *)
-extension View {
+public extension View {
     /// Marks a child view as a scroll target for `AppKitScrollViewContext.scrollTo`.
     func appKitScrollTarget<ID: Hashable>(_ id: ID) -> some View {
-        containerValue(\.appKitScrollTargetID, AnyHashable(id))
+        containerValue(\.appKitScrollTargetID, AppKitScrollTargetID(rawValue: AnyHashable(id)))
     }
 }
 
@@ -153,13 +157,13 @@ private struct HostedSubviewDescriptor: Identifiable {
 
 /// Result-builder-based SwiftUI wrapper that virtualizes arbitrary child views inside an AppKit-backed collection view.
 @available(macOS 15.0, *)
-struct AppKitScrollView<Content: View>: View {
+public struct AppKitScrollView<Content: View>: View {
     @StateObject private var context = AppKitScrollViewContext()
 
     private let configuration: AppKitScrollViewConfiguration
     private let content: (AppKitScrollViewContext) -> Content
 
-    init(
+    public init(
         rowSpacing: CGFloat = 14,
         contentInsets: EdgeInsets = EdgeInsets(top: 18, leading: 24, bottom: 24, trailing: 24),
         minimumRowHeight: CGFloat = 44,
@@ -175,7 +179,7 @@ struct AppKitScrollView<Content: View>: View {
         self.content = content
     }
 
-    init(
+    public init(
         rowSpacing: CGFloat = 14,
         contentInsets: EdgeInsets = EdgeInsets(top: 18, leading: 24, bottom: 24, trailing: 24),
         minimumRowHeight: CGFloat = 44,
@@ -192,14 +196,14 @@ struct AppKitScrollView<Content: View>: View {
         }
     }
 
-    var body: some View {
+    public var body: some View {
         Group(subviews: content(context).environment(\.appKitScrollViewContext, context)) { subviews in
             AppKitScrollViewRepresentable(
                 context: context,
                 configuration: configuration,
                 descriptors: subviews.map { subview in
                     HostedSubviewDescriptor(
-                        id: subview.containerValues.appKitScrollTargetID ?? AnyHashable(subview.id),
+                        id: subview.containerValues.appKitScrollTargetID?.rawValue ?? AnyHashable(subview.id),
                         estimatedHeight: configuration.estimatedRowHeight,
                         rootView: AnyView(subview)
                     )
@@ -228,6 +232,7 @@ private struct AppKitScrollViewRepresentable: NSViewControllerRepresentable {
 
 /// AppKit controller that provides virtualization, measurement, and anchor-preserving relayout for the SwiftUI DSL.
 @available(macOS 15.0, *)
+@MainActor
 private final class AppKitScrollViewController: NSViewController, NSCollectionViewDataSource, NSCollectionViewDelegate, VerticalListCollectionLayoutDelegate {
     private struct ViewportAnchor {
         let indexPath: IndexPath
@@ -256,14 +261,6 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
-    }
-
-    deinit {
-        if let boundsObserver {
-            NotificationCenter.default.removeObserver(boundsObserver)
-        }
-        pendingVisibleMeasurement?.cancel()
-        cancelAnimatedMeasurements()
     }
 
     override func loadView() {
@@ -365,7 +362,9 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             object: scrollView.contentView,
             queue: nil
         ) { [weak self] _ in
-            self?.scheduleVisibleMeasurement()
+            Task { @MainActor [weak self] in
+                self?.scheduleVisibleMeasurement()
+            }
         }
 
         view.addSubview(scrollView)

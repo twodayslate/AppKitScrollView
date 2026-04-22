@@ -1,0 +1,24 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build Swift package
+        run: swift build
+
+      - name: Build example app
+        run: xcodebuild -project AppKitCollectionViewDemo.xcodeproj -scheme AppKitCollectionViewDemo -destination "generic/platform=macOS" build CODE_SIGNING_ALLOWED=NO

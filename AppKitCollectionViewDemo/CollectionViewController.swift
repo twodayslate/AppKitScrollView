@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Root container that opts out of width-based fitting so the window can shrink freely.
 private final class FlexibleRootView: NSView {
@@ -499,11 +500,27 @@ final class CollectionViewController: NSViewController, NSCollectionViewDataSour
         scrollView.reflectScrolledClipView(clipView)
     }
 
+    private func rootView(for cell: AnyDemoCell, width: CGFloat) -> AnyView {
+        cell.makeView(
+            context: DemoCellRenderContext(
+                width: width,
+                metrics: metrics,
+                invalidateLayout: { [weak self] in
+                    self?.invalidateHeight(for: cell)
+                }
+            )
+        )
+    }
+
     /// Recomputes one row's exact height, reloads nearby items, and restores the viewport around the change.
     private func invalidateHeight(for cell: AnyDemoCell) {
         let viewportAnchor = makeViewportAnchor(for: cell)
         let contentWidth = layout.itemContentWidth(for: collectionView.bounds.width)
-        let measuredHeight = measurer.measure(cell: cell, width: contentWidth, metrics: metrics)
+        let measuredHeight = measurer.measure(
+            rootView: rootView(for: cell, width: contentWidth),
+            width: contentWidth,
+            minimumHeight: metrics.minimumHeight
+        )
         cachedHeights[cell.id] = measuredHeight
 
         if let indexPath = indexPath(for: cell) {
@@ -547,7 +564,11 @@ final class CollectionViewController: NSViewController, NSCollectionViewDataSour
 
         for indexPath in visibleIndexPaths {
             let cell = items[indexPath.item]
-            let measuredHeight = measurer.measure(cell: cell, width: contentWidth, metrics: metrics)
+            let measuredHeight = measurer.measure(
+                rootView: rootView(for: cell, width: contentWidth),
+                width: contentWidth,
+                minimumHeight: metrics.minimumHeight
+            )
             let previousHeight = cachedHeights[cell.id]
 
             guard previousHeight == nil || abs((previousHeight ?? 0) - measuredHeight) > 0.5 else {
@@ -635,10 +656,9 @@ final class CollectionViewController: NSViewController, NSCollectionViewDataSour
         let cell = items[indexPath.item]
         let contentWidth = layout.itemContentWidth(for: collectionView.bounds.width)
         item.configure(
-            with: cell,
-            width: contentWidth,
-            metrics: metrics,
-            onLayoutInvalidationRequested: { [weak self] in
+            id: AnyHashable(cell.id),
+            rootView: rootView(for: cell, width: contentWidth),
+            onMeasuredHeightChange: { [weak self] _ in
                 self?.invalidateHeight(for: cell)
             }
         )

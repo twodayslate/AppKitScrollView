@@ -1,6 +1,7 @@
 import AppKit
 
 /// Supplies per-row heights for the single-column collection layout.
+@MainActor
 protocol VerticalListCollectionLayoutDelegate: AnyObject {
     func collectionViewLayout(
         _ layout: VerticalListCollectionLayout,

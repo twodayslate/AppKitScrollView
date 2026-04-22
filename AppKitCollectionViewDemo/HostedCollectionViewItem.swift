@@ -123,23 +123,4 @@ final class HostedCollectionViewItem: NSCollectionViewItem {
         hostingView.layoutSubtreeIfNeeded()
     }
 
-    /// Rebinds the demo cell abstraction into the generic SwiftUI hosting path used by the collection view.
-    func configure(
-        with cell: any DemoCellRenderable,
-        width: CGFloat,
-        metrics: DemoLayoutMetrics,
-        onLayoutInvalidationRequested: @escaping () -> Void
-    ) {
-        configure(
-            id: AnyHashable(cell.id),
-            rootView: cell.makeView(
-                context: DemoCellRenderContext(
-                    width: width,
-                    metrics: metrics,
-                    invalidateLayout: onLayoutInvalidationRequested
-                )
-            ),
-            onMeasuredHeightChange: { _ in }
-        )
-    }
 }
