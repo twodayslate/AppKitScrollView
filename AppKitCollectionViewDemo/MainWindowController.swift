@@ -1,10 +1,11 @@
 import AppKit
+import SwiftUI
 
 /// Creates the main demo window with a resizable content area large enough to stress the collection view.
 final class MainWindowController: NSWindowController {
-    /// Builds the main window using a screen-aware initial size while keeping the content width fully resizable.
+    /// Builds the main window using the result-builder AppKit scroll demo and a screen-aware initial size.
     init() {
-        let contentViewController = CollectionViewController()
+        let contentViewController = NSHostingController(rootView: BuilderDemoView())
         let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 900)
         let initialContentSize = NSSize(
             width: max(520, min(1180, visibleFrame.width - 120)),
@@ -17,7 +18,7 @@ final class MainWindowController: NSWindowController {
             defer: false
         )
         window.contentViewController = contentViewController
-        window.title = "Hosted SwiftUI NSCollectionView"
+        window.title = "AppKitScrollView Result Builder Demo"
         window.setContentSize(initialContentSize)
         window.minSize = NSSize(width: 520, height: 520)
         window.contentMinSize = NSSize(width: 520, height: 520)

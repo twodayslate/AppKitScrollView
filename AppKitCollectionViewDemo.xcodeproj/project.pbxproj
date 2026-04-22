@@ -15,6 +15,8 @@
 		1D4E4E6E2BC7B60100A0A001 /* HostedCollectionViewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */; };
 		1D4E4E702BC7B60100A0A001 /* DemoCells.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E6F2BC7B60100A0A001 /* DemoCells.swift */; };
 		1D4E4E792BC7B60100A0A001 /* DemoCellMeasurer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E782BC7B60100A0A001 /* DemoCellMeasurer.swift */; };
+		1D4E4E7B2BC7B60100A0A001 /* AppKitScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */; };
+		1D4E4E7D2BC7B60100A0A001 /* BuilderDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E7C2BC7B60100A0A001 /* BuilderDemoView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +29,8 @@
 		1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedCollectionViewItem.swift; sourceTree = "<group>"; };
 		1D4E4E6F2BC7B60100A0A001 /* DemoCells.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoCells.swift; sourceTree = "<group>"; };
 		1D4E4E782BC7B60100A0A001 /* DemoCellMeasurer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoCellMeasurer.swift; sourceTree = "<group>"; };
+		1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppKitScrollView.swift; sourceTree = "<group>"; };
+		1D4E4E7C2BC7B60100A0A001 /* BuilderDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuilderDemoView.swift; sourceTree = "<group>"; };
 		1D4E4E712BC7B60100A0A001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -64,6 +68,8 @@
 				1D4E4E632BC7B60100A0A001 /* main.swift */,
 				1D4E4E652BC7B60100A0A001 /* AppDelegate.swift */,
 				1D4E4E672BC7B60100A0A001 /* MainWindowController.swift */,
+				1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */,
+				1D4E4E7C2BC7B60100A0A001 /* BuilderDemoView.swift */,
 				1D4E4E692BC7B60100A0A001 /* CollectionViewController.swift */,
 				1D4E4E6B2BC7B60100A0A001 /* VerticalListCollectionLayout.swift */,
 				1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */,
@@ -141,6 +147,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				1D4E4E662BC7B60100A0A001 /* AppDelegate.swift in Sources */,
+				1D4E4E7B2BC7B60100A0A001 /* AppKitScrollView.swift in Sources */,
+				1D4E4E7D2BC7B60100A0A001 /* BuilderDemoView.swift in Sources */,
 				1D4E4E6A2BC7B60100A0A001 /* CollectionViewController.swift in Sources */,
 				1D4E4E702BC7B60100A0A001 /* DemoCells.swift in Sources */,
 				1D4E4E792BC7B60100A0A001 /* DemoCellMeasurer.swift in Sources */,
@@ -164,7 +172,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -181,7 +189,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
@@ -199,7 +207,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.AppKitCollectionViewDemo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -220,7 +228,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.AppKitCollectionViewDemo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
