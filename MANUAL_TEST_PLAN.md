@@ -62,6 +62,20 @@ Validated from layout logs:
 
 This is not a full manual sign-off. The remaining unchecked items below still need a human visual pass, especially continuous resize, full top-to-bottom scrolling, fast scrolling past the giant long-text row, and subjective animation/performance checks.
 
+Targeted resize regression validation was run on 2026-04-24 with:
+
+```sh
+swift build
+xcodebuild -project 'AppKitCollectionViewDemo.xcodeproj' -scheme 'AppKitCollectionViewDemo' -destination 'platform=macOS,arch=arm64' build CODE_SIGNING_ALLOWED=NO
+APPKIT_SCROLL_DEBUG_LAYOUT=1 APPKIT_SCROLL_AUTODEMO=1 APPKIT_SCROLL_AUTODEMO_RESIZE=1 AppKitCollectionViewDemo.app/Contents/MacOS/AppKitCollectionViewDemo
+```
+
+Validated from layout logs:
+
+- Automated window narrowing/widening ran while dynamic rows were being measured.
+- Trend and disclosure toggles still settled with visible neighboring rows at `nextGap=14`.
+- No visible row-frame log showed a gap different from the configured `14` pt spacing.
+
 ## Blocking Scenarios
 
 These are the cases most likely to hide real regressions.
@@ -147,6 +161,10 @@ This row is intentionally much taller than the viewport.
   Expected: content reflows, nothing overlaps, nothing clips.
 - [ ] Drag back to a wide width.
   Expected: rows shrink appropriately and do not leave stale empty bands behind.
+- [ ] Scroll near the bottom of the list, stop on rows around `900...999`, then resize the window narrower and wider.
+  Expected: visible rows keep their full measured height during reflow; no row falls back to an estimated height and clips its top or bottom content.
+- [ ] Expand or collapse a trend/disclosure row near the bottom of the list, then immediately resize the window.
+  Expected: dynamic-height rows remain fully visible and neighboring rows keep the normal row spacing.
 - [ ] Resize continuously while the viewport contains:
   - a trend row
   - a disclosure row
@@ -185,6 +203,7 @@ These regressions have already happened and must be rechecked every time:
 - [ ] Expanding a row clips the next row.
 - [ ] First launch shows clipped or partially measured rows near the top.
 - [ ] Scrolling past the giant long-text row causes broken heights in the next rows.
+- [ ] Resizing near the bottom of the list causes visible rows to clip after wrapping changes.
 - [ ] The collection leaves a large dead area at the bottom after content shrinks.
 - [ ] Visible rows flash or redraw stale content during relayout.
 - [ ] Manual window resizing stops behaving like real width-driven reflow.

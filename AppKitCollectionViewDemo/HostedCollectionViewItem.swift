@@ -121,4 +121,10 @@ final class HostedCollectionViewItem: NSCollectionViewItem {
         hostingView.layoutSubtreeIfNeeded()
     }
 
+    /// Forces the existing hosted subtree to reflow in-place so its embedded reporter emits a fresh height.
+    func requestLiveHeightMeasurement() {
+        hostingView.frame = view.bounds
+        hostingView.needsLayout = true
+        hostingView.layoutSubtreeIfNeeded()
+    }
 }

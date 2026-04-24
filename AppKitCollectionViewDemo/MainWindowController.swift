@@ -29,10 +29,33 @@ final class MainWindowController: NSWindowController {
         window.isRestorable = false
 
         super.init(window: window)
+
+        scheduleDebugResizePassIfNeeded(for: window, initialContentSize: initialContentSize)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    /// Runs only under `APPKIT_SCROLL_AUTODEMO_RESIZE=1` so resize regressions can be reproduced from CI-like logs.
+    private func scheduleDebugResizePassIfNeeded(for window: NSWindow, initialContentSize: NSSize) {
+        guard ProcessInfo.processInfo.environment["APPKIT_SCROLL_AUTODEMO_RESIZE"] == "1" else {
+            return
+        }
+
+        let sizes = [
+            NSSize(width: max(620, initialContentSize.width * 0.58), height: max(560, initialContentSize.height * 0.75)),
+            NSSize(width: max(760, initialContentSize.width * 0.72), height: initialContentSize.height),
+            initialContentSize,
+            NSSize(width: max(520, initialContentSize.width * 0.52), height: max(520, initialContentSize.height * 0.64)),
+            initialContentSize
+        ]
+
+        for (index, size) in sizes.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (Double(index + 1) * 0.7)) { [weak window] in
+                window?.setContentSize(size)
+            }
+        }
     }
 }

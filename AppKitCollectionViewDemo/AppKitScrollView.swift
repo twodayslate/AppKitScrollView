@@ -442,13 +442,14 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         )
     }
 
-    /// Keeps the document view width in sync with the viewport and clears cached heights when wrapping changes.
+    /// Keeps the document view width in sync with the viewport while preserving measured heights during resize.
     private func syncCollectionViewGeometry() {
         let availableViewportWidth = max(scrollView.contentSize.width, 320)
         guard availableViewportWidth > 0 else {
             return
         }
 
+        let didChangeDocumentWidth = abs(collectionView.frame.width - availableViewportWidth) > 0.5
         if abs(collectionView.frame.width - availableViewportWidth) > 0.5 {
             collectionView.setFrameSize(NSSize(width: availableViewportWidth, height: max(collectionView.frame.height, scrollView.contentSize.height)))
         }
@@ -456,12 +457,16 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         let currentMeasurementWidth = layout.itemContentWidth(for: availableViewportWidth)
         if abs(currentMeasurementWidth - measurementWidth) > 1 {
             measurementWidth = currentMeasurementWidth
-            cachedHeights.removeAll(keepingCapacity: true)
             liveVisibleHeights.removeAll(keepingCapacity: true)
             pendingLiveHeightUpdates.removeAll(keepingCapacity: true)
             cancelLiveHeightResets()
             invalidateLayout()
-            scheduleVisibleMeasurement(forceAll: true)
+            requestVisibleHostedMeasurements()
+            scheduleVisibleMeasurement(forceAll: true, delay: 0.08)
+        } else if didChangeDocumentWidth {
+            invalidateLayout()
+            requestVisibleHostedMeasurements()
+            scheduleVisibleMeasurement(forceAll: true, delay: 0.08)
         } else {
             updateCollectionViewHeight()
         }
@@ -481,6 +486,17 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         collectionView.collectionViewLayout?.invalidateLayout()
         collectionView.layoutSubtreeIfNeeded()
         updateCollectionViewHeight()
+    }
+
+    /// Nudges existing visible hosts to lay out at the new width without reloading the SwiftUI subtree.
+    private func requestVisibleHostedMeasurements() {
+        for item in collectionView.visibleItems() {
+            guard let hostedItem = item as? HostedCollectionViewItem else {
+                continue
+            }
+
+            hostedItem.requestLiveHeightMeasurement()
+        }
     }
 
     private func scheduleVisibleMeasurement(forceAll: Bool = false, delay: TimeInterval = 0) {
