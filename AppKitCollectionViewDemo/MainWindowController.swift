@@ -26,6 +26,7 @@ final class MainWindowController: NSWindowController {
         window.contentResizeIncrements = NSSize(width: 1, height: 1)
         window.titleVisibility = .visible
         window.titlebarAppearsTransparent = false
+        window.isRestorable = false
 
         super.init(window: window)
     }

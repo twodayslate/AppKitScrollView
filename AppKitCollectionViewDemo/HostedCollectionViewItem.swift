@@ -1,81 +1,82 @@
 import AppKit
 import SwiftUI
 
+/// Embeds a tiny AppKit probe inside the SwiftUI row so height changes are measured from the live hosted subtree.
+private struct HostedHeightReporter: NSViewRepresentable {
+    let onMeasuredHeightChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> MeasuredHeightView {
+        let view = MeasuredHeightView()
+        view.onMeasuredHeightChange = onMeasuredHeightChange
+        return view
+    }
+
+    func updateNSView(_ nsView: MeasuredHeightView, context: Context) {
+        nsView.onMeasuredHeightChange = onMeasuredHeightChange
+        nsView.scheduleReport()
+    }
+
+    /// Reports its laid-out background height without forcing a second SwiftUI tree to be rendered offscreen.
+    final class MeasuredHeightView: NSView {
+        var onMeasuredHeightChange: ((CGFloat) -> Void)?
+
+        private var lastReportedHeight: CGFloat = 0
+        private var reportScheduled = false
+
+        override func layout() {
+            super.layout()
+            scheduleReport()
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            scheduleReport()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            scheduleReport()
+        }
+
+        func scheduleReport() {
+            guard !reportScheduled else {
+                return
+            }
+
+            reportScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.reportHeightIfNeeded()
+            }
+        }
+
+        private func reportHeightIfNeeded() {
+            reportScheduled = false
+
+            let measuredHeight = bounds.height
+            guard measuredHeight > 0, abs(measuredHeight - lastReportedHeight) > 0.5 else {
+                return
+            }
+
+            lastReportedHeight = measuredHeight
+            onMeasuredHeightChange?(measuredHeight)
+        }
+    }
+}
+
 /// Keeps the hosted SwiftUI subtree identity stable while AppKit reuses collection items.
 private struct IdentifiedHostedRootView: View {
     let id: AnyHashable
     let rootView: AnyView
+    let onMeasuredHeightChange: (CGFloat) -> Void
 
     var body: some View {
         rootView
             .fixedSize(horizontal: false, vertical: true)
+            .background(
+                HostedHeightReporter(onMeasuredHeightChange: onMeasuredHeightChange)
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .id(id)
-    }
-}
-
-/// Reports live width-constrained fitting-height changes from the NSHostingView back to AppKit.
-private final class ReportingHostingView: NSHostingView<AnyView> {
-    var onMeasuredHeightChange: ((CGFloat) -> Void)?
-
-    private var lastReportedWidth: CGFloat = 0
-    private var lastReportedHeight: CGFloat = 0
-    private var measurementScheduled = false
-
-    override func layout() {
-        super.layout()
-        scheduleMeasurement()
-    }
-
-    override func invalidateIntrinsicContentSize() {
-        super.invalidateIntrinsicContentSize()
-        scheduleMeasurement()
-    }
-
-    override func setFrameSize(_ newSize: NSSize) {
-        let widthChanged = abs(frame.width - newSize.width) > 0.5
-        super.setFrameSize(newSize)
-
-        if widthChanged {
-            scheduleMeasurement()
-        }
-    }
-
-    func resetMeasurementCache() {
-        lastReportedWidth = 0
-        lastReportedHeight = 0
-        measurementScheduled = false
-    }
-
-    private func scheduleMeasurement() {
-        guard !measurementScheduled else {
-            return
-        }
-
-        measurementScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            self?.reportMeasurementIfNeeded()
-        }
-    }
-
-    private func reportMeasurementIfNeeded() {
-        measurementScheduled = false
-
-        let measuredWidth = bounds.width
-        guard measuredWidth > 1 else {
-            return
-        }
-
-        let measuredHeight = max(fittingSize.height, 1)
-        guard
-            abs(measuredWidth - lastReportedWidth) > 0.5 ||
-            abs(measuredHeight - lastReportedHeight) > 0.5
-        else {
-            return
-        }
-
-        lastReportedWidth = measuredWidth
-        lastReportedHeight = measuredHeight
-        onMeasuredHeightChange?(measuredHeight)
     }
 }
 
@@ -83,7 +84,7 @@ private final class ReportingHostingView: NSHostingView<AnyView> {
 final class HostedCollectionViewItem: NSCollectionViewItem {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("HostedCollectionViewItem")
 
-    private let hostingView = ReportingHostingView(rootView: AnyView(EmptyView()))
+    private let hostingView = NSHostingView(rootView: AnyView(EmptyView()))
 
     override func loadView() {
         view = NSView(frame: .zero)
@@ -101,8 +102,6 @@ final class HostedCollectionViewItem: NSCollectionViewItem {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        hostingView.onMeasuredHeightChange = nil
-        hostingView.resetMeasurementCache()
         hostingView.rootView = AnyView(EmptyView())
     }
 
@@ -112,12 +111,11 @@ final class HostedCollectionViewItem: NSCollectionViewItem {
         rootView: AnyView,
         onMeasuredHeightChange: @escaping (CGFloat) -> Void
     ) {
-        hostingView.onMeasuredHeightChange = onMeasuredHeightChange
-        hostingView.resetMeasurementCache()
         hostingView.rootView = AnyView(
             IdentifiedHostedRootView(
                 id: id,
-                rootView: rootView
+                rootView: rootView,
+                onMeasuredHeightChange: onMeasuredHeightChange
             )
         )
         hostingView.layoutSubtreeIfNeeded()

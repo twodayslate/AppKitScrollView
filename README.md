@@ -97,18 +97,16 @@ struct ContentView: View {
 
 ### Height-Changing Rows
 
-If a row changes its own height because of local SwiftUI state, read the context from the environment and ask the host to remeasure:
+In normal SwiftUI usage you do not need to manually invalidate the layout. `AppKitScrollView` watches visible hosted rows for width-constrained height changes and automatically remeasures them when local state expands, collapses, or animates.
 
 ```swift
 struct ExpandableRow: View {
-    @Environment(\.appKitScrollViewContext) private var scrollContext
     @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading) {
             Button(isExpanded ? "Collapse" : "Expand") {
                 isExpanded.toggle()
-                scrollContext?.animateLayout(duration: 0.3)
             }
 
             if isExpanded {
@@ -119,11 +117,17 @@ struct ExpandableRow: View {
 }
 ```
 
+That covers common cases like:
+- `DisclosureGroup`
+- `if / else` branches
+- animated show / hide sections
+- wrapped text that reflows as the window resizes
+
 Use:
 - `scrollTo(_:anchor:)` for row-targeted scrolling
 - `scrollToTop()` / `scrollToBottom()` for simple navigation
-- `invalidateLayout()` when the height changes without a coordinated animation
-- `animateLayout(duration:)` when the height change should track a SwiftUI animation
+- `invalidateLayout()` only as an escape hatch for unusual cases where height changes come from something the host cannot observe directly
+- `animateLayout(duration:)` only when you want to explicitly coordinate AppKit relayout timing with some custom animation behavior
 
 ## Example Project
 
@@ -136,6 +140,8 @@ The repository keeps the demo app in `AppKitCollectionViewDemo.xcodeproj`. It ex
 - aggressive resize and relayout behavior
 
 Open the project and run the `AppKitCollectionViewDemo` scheme to inspect the behavior interactively.
+
+The manual sign-off checklist lives in [`MANUAL_TEST_PLAN.md`](MANUAL_TEST_PLAN.md).
 
 ## Repository Layout
 

@@ -6,6 +6,7 @@ import SwiftUI
 struct BuilderDemoView: View {
     @State private var rows = BuilderDemoFactory.makeRows(count: 1000)
     @State private var showsConditionalSpotlight = true
+    @State private var hasStartedAutoDemo = false
 
     var body: some View {
         AppKitScrollView(estimatedRowHeight: 156) { context in
@@ -30,6 +31,9 @@ struct BuilderDemoView: View {
                     context.scrollToBottom()
                 }
             )
+            .onAppear {
+                startAutoDemoIfNeeded(context: context)
+            }
 
             if showsConditionalSpotlight {
                 BuilderConditionalSpotlightCard(
@@ -45,13 +49,15 @@ struct BuilderDemoView: View {
                 )
             }
 
+            BuilderTrendAnimationLabCard()
+            BuilderDisclosureAnimationLabCard()
+
             BuilderLongTextCard(
                 accent: .systemTeal,
-                title: "Long Text Stress Test",
-                message: BuilderDemoFactory.longFormMessage
+                title: "10x Viewport Text Torture Test",
+                summary: "This fixed card is intentionally enormous. At a normal desktop window size it should be roughly ten times taller than the viewport, so text wrapping, measurement, and scrolling have to stay correct for one giant cell.",
+                paragraphs: BuilderDemoFactory.longFormParagraphs
             )
-
-            BuilderTrendAnimationLabCard()
 
             ForEach(rows) { row in
                 BuilderDemoRowView(row: row)
@@ -64,6 +70,97 @@ struct BuilderDemoView: View {
 
     private func regenerateRows() {
         rows = BuilderDemoFactory.makeRows(count: 1000)
+    }
+
+    /// Starts a deterministic debug-only interaction pass so layout regressions can be checked from logs.
+    @MainActor
+    private func startAutoDemoIfNeeded(context: AppKitScrollViewContext) {
+        guard ProcessInfo.processInfo.environment["APPKIT_SCROLL_AUTODEMO"] == "1", !hasStartedAutoDemo else {
+            return
+        }
+
+        hasStartedAutoDemo = true
+        Task { @MainActor in
+            guard await sleepForAutoDemo(milliseconds: 1_200) else {
+                return
+            }
+
+            await runAutoDemoTrendPass(context: context)
+            await runAutoDemoDisclosurePass(context: context)
+        }
+    }
+
+    @MainActor
+    private func runAutoDemoTrendPass(context: AppKitScrollViewContext) async {
+        guard let target = rows.dropFirst(12).first(where: { row in
+            if case .trend = row.kind {
+                return true
+            }
+
+            return false
+        }) else {
+            return
+        }
+
+        context.scrollTo(target.id, anchor: .center)
+        guard await sleepForAutoDemo(milliseconds: 900) else {
+            return
+        }
+
+        guard case let .trend(model) = target.kind else {
+            return
+        }
+
+        NSLog("[AppKitScrollViewDemo] toggling random trend \(model.title) to \(!model.showsTrend)")
+        model.showsTrend.toggle()
+        guard await sleepForAutoDemo(milliseconds: 900) else {
+            return
+        }
+
+        NSLog("[AppKitScrollViewDemo] toggling random trend \(model.title) to \(!model.showsTrend)")
+        model.showsTrend.toggle()
+        _ = await sleepForAutoDemo(milliseconds: 900)
+    }
+
+    @MainActor
+    private func runAutoDemoDisclosurePass(context: AppKitScrollViewContext) async {
+        guard let target = rows.dropFirst(12).first(where: { row in
+            if case .disclosure = row.kind {
+                return true
+            }
+
+            return false
+        }) else {
+            return
+        }
+
+        context.scrollTo(target.id, anchor: .center)
+        guard await sleepForAutoDemo(milliseconds: 900) else {
+            return
+        }
+
+        guard case let .disclosure(model) = target.kind else {
+            return
+        }
+
+        NSLog("[AppKitScrollViewDemo] toggling random disclosure \(model.title) to \(!model.isExpanded)")
+        model.isExpanded.toggle()
+        guard await sleepForAutoDemo(milliseconds: 900) else {
+            return
+        }
+
+        NSLog("[AppKitScrollViewDemo] toggling random disclosure \(model.title) to \(!model.isExpanded)")
+        model.isExpanded.toggle()
+        _ = await sleepForAutoDemo(milliseconds: 900)
+    }
+
+    private func sleepForAutoDemo(milliseconds: Int) async -> Bool {
+        do {
+            try await Task.sleep(for: .milliseconds(milliseconds))
+            return true
+        } catch {
+            return false
+        }
     }
 }
 
@@ -154,7 +251,8 @@ private struct BuilderConditionalSpotlightCard: View {
 private struct BuilderLongTextCard: View {
     let accent: NSColor
     let title: String
-    let message: String
+    let summary: String
+    let paragraphs: [String]
 
     var body: some View {
         DemoSurface(accent: Color(nsColor: accent)) {
@@ -162,11 +260,21 @@ private struct BuilderLongTextCard: View {
                 Text(title)
                     .font(.system(size: 22, weight: .semibold, design: .rounded))
 
-                Text(message)
+                Text(summary)
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                        Text("\(index + 1). \(paragraph)")
+                            .font(.system(size: 15, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -187,9 +295,54 @@ private struct BuilderTrendAnimationLabCard: View {
                 }
 
                 for _ in 0..<3 {
-                    try? await Task.sleep(for: .milliseconds(800))
+                    do {
+                        try await Task.sleep(for: .milliseconds(800))
+                    } catch {
+                        return
+                    }
+
                     await MainActor.run {
+                        if autoDemoEnabled {
+                            NSLog("[AppKitScrollViewDemo] toggling animation lab trend to \(!model.showsTrend)")
+                        }
                         model.showsTrend.toggle()
+                    }
+                }
+            }
+    }
+}
+
+@available(macOS 15.0, *)
+private struct BuilderDisclosureAnimationLabCard: View {
+    @StateObject private var model = BuilderDemoFactory.makeAnimationLabDisclosure()
+
+    private let autoDemoEnabled = ProcessInfo.processInfo.environment["APPKIT_SCROLL_AUTODEMO"] == "1"
+
+    var body: some View {
+        DisclosurePanelRow(model: model)
+            .task(id: autoDemoEnabled) {
+                guard autoDemoEnabled else {
+                    return
+                }
+
+                do {
+                    try await Task.sleep(for: .milliseconds(2600))
+                } catch {
+                    return
+                }
+
+                for _ in 0..<3 {
+                    do {
+                        try await Task.sleep(for: .milliseconds(800))
+                    } catch {
+                        return
+                    }
+
+                    await MainActor.run {
+                        if autoDemoEnabled {
+                            NSLog("[AppKitScrollViewDemo] toggling animation lab disclosure to \(!model.isExpanded)")
+                        }
+                        model.isExpanded.toggle()
                     }
                 }
             }
@@ -314,7 +467,7 @@ private struct ChatBubbleRow: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
-                    ForEach(model.tags, id: \.self) { tag in
+                    ForEach(Array(model.tags.enumerated()), id: \.offset) { _, tag in
                         DemoTag(title: tag, accent: accent)
                     }
                 }
@@ -339,7 +492,6 @@ private struct ChatBubbleRow: View {
 
 private struct DisclosurePanelRow: View {
     @ObservedObject var model: DisclosureRowModel
-    @Environment(\.appKitScrollViewContext) private var scrollContext
 
     var body: some View {
         let accent = Color(nsColor: model.accent)
@@ -387,32 +539,36 @@ private struct DisclosurePanelRow: View {
                         .foregroundStyle(accent)
                 }
                 .accentColor(accent)
+                .animation(.easeInOut(duration: 0.28), value: model.isExpanded)
 
                 HStack(spacing: 8) {
-                    ForEach(model.tags, id: \.self) { tag in
+                    ForEach(Array(model.tags.enumerated()), id: \.offset) { _, tag in
                         DemoTag(title: tag, accent: accent)
                     }
                 }
             }
-        }
-        .onChange(of: model.isExpanded) { _, _ in
-            scrollContext?.invalidateLayout()
         }
     }
 }
 
 private struct TrendPanelRow: View {
     @ObservedObject var model: TrendRowModel
-    @Environment(\.appKitScrollViewContext) private var scrollContext
 
-    @State private var rendersTrendSection = false
-    @State private var trendRevealProgress: CGFloat = 0
-    @State private var trendContentHeight: CGFloat = 0
+    @State private var rendersTrendSection: Bool
+    @State private var trendRevealProgress: CGFloat
+    @State private var trendContentHeight: CGFloat
 
     private let trendAnimation = Animation.easeInOut(duration: 0.34)
-    private let trendAnimationDuration: TimeInterval = 0.34
     private var fallbackTrendContentHeight: CGFloat {
         max(CGFloat(model.bars.count) * 30 - 8, 44)
+    }
+
+    init(model: TrendRowModel) {
+        self._model = ObservedObject(wrappedValue: model)
+        let startsExpanded = model.showsTrend
+        _rendersTrendSection = State(initialValue: startsExpanded)
+        _trendRevealProgress = State(initialValue: startsExpanded ? 1 : 0)
+        _trendContentHeight = State(initialValue: 0)
     }
 
     var body: some View {
@@ -514,10 +670,6 @@ private struct TrendPanelRow: View {
                 }
             }
         }
-        .onAppear {
-            rendersTrendSection = model.showsTrend
-            trendRevealProgress = model.showsTrend ? 1 : 0
-        }
         .onChange(of: model.showsTrend) { _, showsTrend in
             applyTrendVisibility(showsTrend)
         }
@@ -529,20 +681,17 @@ private struct TrendPanelRow: View {
                 rendersTrendSection = true
                 trendRevealProgress = 0
                 trendContentHeight = max(trendContentHeight, fallbackTrendContentHeight)
-                scrollContext?.invalidateLayout()
             }
 
             withAnimation(trendAnimation) {
                 trendRevealProgress = 1
             }
-            scrollContext?.animateLayout(duration: trendAnimationDuration)
             return
         }
 
         withAnimation(trendAnimation) {
             trendRevealProgress = 0
         }
-        scrollContext?.animateLayout(duration: trendAnimationDuration)
     }
 }
 
@@ -591,11 +740,18 @@ private struct DemoTag: View {
 }
 
 private enum BuilderDemoFactory {
-    static let longFormMessage = [
-        "This block is intentionally long so the AppKit-backed builder can prove that wrapped SwiftUI text is measured correctly and never truncated when the window narrows, widens, or the collection scrolls under pressure.",
-        "It keeps going with enough density to force several paragraphs of reflow: signal lattice drift follows the anchor path while nested modules stream context through the viewport, and the host still needs to preserve every line instead of clipping after an estimated row height.",
-        "If this row ever truncates, overlaps, or leaves a stale gap after resizing, the measurement or invalidation pipeline is wrong. That makes it a good fixed regression target alongside the disclosure and trend cards."
-    ].joined(separator: " ")
+    static let longFormParagraphs: [String] = {
+        let baseParagraphs = [
+            "This block exists purely to stress measurement. It should stay readable when the window narrows, widens, jumps to a different scroll position, or gets remeasured after neighboring rows change height.",
+            "The point is not pretty prose. The point is forcing one SwiftUI-authored cell to become absurdly tall so the AppKit host has to preserve line wrapping, avoid clipping, and keep scroll anchors coherent over a very large single item.",
+            "If this card ever truncates, overlaps another block, or leaves stale whitespace after relayout, the package is still relying on an estimate somewhere it should be trusting live or exact measurement instead."
+        ]
+
+        return (0..<220).map { index in
+            let paragraph = baseParagraphs[index % baseParagraphs.count]
+            return "Section \(index + 1): \(paragraph)"
+        }
+    }()
 
     static func makeRows(count: Int) -> [BuilderDemoRow] {
         var generator = BuilderSeededGenerator(seed: 0xB017_D3110)
@@ -673,6 +829,22 @@ private enum BuilderDemoFactory {
             ],
             bars: [0.71, 0.34, 0.47, 0.84, 0.46],
             showsTrend: true
+        )
+    }
+
+    static func makeAnimationLabDisclosure() -> DisclosureRowModel {
+        DisclosureRowModel(
+            accent: .systemOrange,
+            title: "Animation Lab Disclosure",
+            summary: "This fixed row sits near the top so disclosure expand and collapse behavior can be tested without depending on the random dataset.",
+            details: [
+                "The host should relayout surrounding rows smoothly while this disclosure expands.",
+                "When the detail list collapses, the gap between neighboring blocks should close back to the normal row spacing.",
+                "The row should not clip its bullets or leave stale empty space behind after the animation completes.",
+                "This fixed lab row exists so regressions are easy to reproduce and re-check."
+            ],
+            tags: ["Disclosure", "Animation", "Relayout"],
+            isExpanded: true
         )
     }
 
