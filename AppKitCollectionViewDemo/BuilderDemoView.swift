@@ -4,14 +4,20 @@ import SwiftUI
 /// Sample screen that uses the result-builder-backed AppKit scroll view with a heterogeneous 1000-row dataset.
 @available(macOS 15.0, *)
 struct BuilderDemoView: View {
+    private let initialRowCount = 1000
+    private let loadMoreBatchSize = 250
+
     @State private var rows = BuilderDemoFactory.makeRows(count: 1000)
     @State private var showsConditionalSpotlight = true
+    @State private var isLoadingMoreRows = false
+    @State private var loadMoreGeneration = UUID()
     @State private var hasStartedAutoDemo = false
 
     var body: some View {
         AppKitScrollView(estimatedRowHeight: 156) { context in
             BuilderOverviewCard(
                 rowCount: rows.count,
+                batchSize: loadMoreBatchSize,
                 estimatedRowHeight: context.estimatedRowHeight,
                 showsConditionalSpotlight: showsConditionalSpotlight,
                 onRegenerate: regenerateRows,
@@ -63,13 +69,61 @@ struct BuilderDemoView: View {
                 BuilderDemoRowView(row: row)
                     .appKitScrollTarget(row.id)
             }
+
+            BuilderLoadMoreCard(
+                rowCount: rows.count,
+                batchSize: loadMoreBatchSize,
+                isLoading: isLoadingMoreRows
+            )
+            .appKitScrollTarget("load-more-sentinel")
+            .onAppear {
+                scheduleLoadMoreRows()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func regenerateRows() {
-        rows = BuilderDemoFactory.makeRows(count: 1000)
+        loadMoreGeneration = UUID()
+        isLoadingMoreRows = false
+        rows = BuilderDemoFactory.makeRows(count: initialRowCount)
+    }
+
+    /// Starts a single delayed load when the bottom sentinel becomes visible.
+    private func scheduleLoadMoreRows() {
+        guard !isLoadingMoreRows else {
+            return
+        }
+
+        isLoadingMoreRows = true
+        let generation = loadMoreGeneration
+        let shouldLogLoadMore = ProcessInfo.processInfo.environment["APPKIT_SCROLL_AUTODEMO_LOAD_MORE"] == "1"
+
+        if shouldLogLoadMore {
+            NSLog("[AppKitScrollViewDemo] scheduling load more from \(rows.count) rows")
+        }
+
+        Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                isLoadingMoreRows = false
+                return
+            }
+
+            guard generation == loadMoreGeneration else {
+                return
+            }
+
+            let startIndex = rows.count
+            rows.append(contentsOf: BuilderDemoFactory.makeRows(count: loadMoreBatchSize, startIndex: startIndex))
+            isLoadingMoreRows = false
+
+            if shouldLogLoadMore {
+                NSLog("[AppKitScrollViewDemo] appended \(loadMoreBatchSize) rows; total=\(rows.count)")
+            }
+        }
     }
 
     /// Starts a deterministic debug-only interaction pass so layout regressions can be checked from logs.
@@ -87,6 +141,7 @@ struct BuilderDemoView: View {
 
             await runAutoDemoTrendPass(context: context)
             await runAutoDemoDisclosurePass(context: context)
+            await runAutoDemoLoadMorePassIfNeeded(context: context)
         }
     }
 
@@ -154,6 +209,23 @@ struct BuilderDemoView: View {
         _ = await sleepForAutoDemo(milliseconds: 900)
     }
 
+    @MainActor
+    private func runAutoDemoLoadMorePassIfNeeded(context: AppKitScrollViewContext) async {
+        guard ProcessInfo.processInfo.environment["APPKIT_SCROLL_AUTODEMO_LOAD_MORE"] == "1" else {
+            return
+        }
+
+        let startingCount = rows.count
+        NSLog("[AppKitScrollViewDemo] scrolling to bottom to trigger load more from \(startingCount) rows")
+        context.scrollToBottom()
+
+        guard await sleepForAutoDemo(milliseconds: 2_700) else {
+            return
+        }
+
+        NSLog("[AppKitScrollViewDemo] load-more pass observed \(rows.count) rows")
+    }
+
     private func sleepForAutoDemo(milliseconds: Int) async -> Bool {
         do {
             try await Task.sleep(for: .milliseconds(milliseconds))
@@ -167,6 +239,7 @@ struct BuilderDemoView: View {
 @available(macOS 15.0, *)
 private struct BuilderOverviewCard: View {
     let rowCount: Int
+    let batchSize: Int
     let estimatedRowHeight: CGFloat
     let showsConditionalSpotlight: Bool
     let onRegenerate: () -> Void
@@ -182,7 +255,7 @@ private struct BuilderOverviewCard: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("AppKitScrollView { context in ... }")
                             .font(.system(size: 28, weight: .semibold, design: .rounded))
-                        Text("\(rowCount) result-builder rows hosted in an AppKit NSCollectionView. Resize the window, expand disclosures, toggle trends, and scroll hard.")
+                        Text("\(rowCount) result-builder rows hosted in an AppKit NSCollectionView. Resize the window, expand disclosures, toggle trends, scroll hard, and pause at the bottom to load \(batchSize) more rows.")
                             .font(.system(size: 14, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -199,7 +272,7 @@ private struct BuilderOverviewCard: View {
                             .buttonStyle(.bordered)
                         Button(showsConditionalSpotlight ? "Show Else Branch" : "Show If Branch", action: onToggleConditionalSpotlight)
                             .buttonStyle(.bordered)
-                        Button("Regenerate 1000 Rows", action: onRegenerate)
+                        Button("Regenerate Rows", action: onRegenerate)
                             .buttonStyle(.borderedProminent)
                     }
                     .controlSize(.large)
@@ -216,6 +289,7 @@ private struct BuilderOverviewCard: View {
                     DemoTag(title: "proxy scrollTo", accent: .pink)
                     DemoTag(title: "if / else branch", accent: .orange)
                     DemoTag(title: "manual window resize", accent: .indigo)
+                    DemoTag(title: "infinite bottom load", accent: .green)
                 }
             }
         }
@@ -242,6 +316,38 @@ private struct BuilderConditionalSpotlightCard: View {
                     .font(.system(size: 14, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct BuilderLoadMoreCard: View {
+    let rowCount: Int
+    let batchSize: Int
+    let isLoading: Bool
+
+    var body: some View {
+        let accent = Color(nsColor: .systemGreen)
+
+        DemoSurface(accent: accent) {
+            HStack(alignment: .center, spacing: 16) {
+                ProgressView()
+                    .controlSize(.small)
+                    .opacity(isLoading ? 1 : 0)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(isLoading ? "Loading more rows..." : "Bottom reached")
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+
+                    Text(isLoading ? "Waiting 2 seconds, then appending \(batchSize) generated rows." : "\(rowCount) rows loaded. Pause here to append the next batch.")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 16)
+
+                DemoTag(title: "+\(batchSize)", accent: accent)
             }
         }
     }
@@ -753,10 +859,11 @@ private enum BuilderDemoFactory {
         }
     }()
 
-    static func makeRows(count: Int) -> [BuilderDemoRow] {
-        var generator = BuilderSeededGenerator(seed: 0xB017_D3110)
+    static func makeRows(count: Int, startIndex: Int = 0) -> [BuilderDemoRow] {
+        let seedOffset = UInt64(truncatingIfNeeded: startIndex) &* 0x9E37_79B9_7F4A_7C15
+        var generator = BuilderSeededGenerator(seed: 0xB017_D3110 ^ seedOffset)
 
-        return (0..<count).map { index in
+        return (startIndex..<(startIndex + count)).map { index in
             let kind = Int.random(in: 0..<3, using: &generator)
 
             switch kind {

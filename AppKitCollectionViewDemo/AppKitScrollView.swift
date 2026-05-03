@@ -352,10 +352,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
 
         if previousIDs != nextIDs {
-            cachedHeights.removeAll(keepingCapacity: true)
-            liveVisibleHeights.removeAll(keepingCapacity: true)
-            pendingLiveHeightUpdates.removeAll(keepingCapacity: true)
-            cancelLiveHeightResets()
+            removeMeasurementsForDeletedItems(remainingIDs: Set(nextIDs))
             collectionView.reloadData()
             invalidateLayout()
             scheduleVisibleMeasurement(forceAll: true)
@@ -520,6 +517,18 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     private func cancelLiveHeightResets() {
         pendingLiveHeightResets.values.forEach { $0.cancel() }
         pendingLiveHeightResets.removeAll(keepingCapacity: false)
+    }
+
+    /// Preserves measured heights for retained IDs while dropping stale state for removed builder children.
+    private func removeMeasurementsForDeletedItems(remainingIDs: Set<AnyHashable>) {
+        cachedHeights = cachedHeights.filter { remainingIDs.contains($0.key) }
+        liveVisibleHeights = liveVisibleHeights.filter { remainingIDs.contains($0.key) }
+        pendingLiveHeightUpdates = pendingLiveHeightUpdates.filter { remainingIDs.contains($0.key) }
+
+        for (itemID, workItem) in pendingLiveHeightResets where !remainingIDs.contains(itemID) {
+            workItem.cancel()
+            pendingLiveHeightResets[itemID] = nil
+        }
     }
 
     private func triggerAutomaticAnimatedLayoutIfNeeded(

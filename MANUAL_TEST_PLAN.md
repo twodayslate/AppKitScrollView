@@ -8,6 +8,7 @@ The goal is not just "looks okay once." The goal is:
 - no stale empty gaps after collapse
 - no stale reused content
 - no broken scroll anchoring
+- no broken append behavior when infinite scrolling loads more rows
 - no obvious jank or beachballing during normal interaction
 
 ## Exit Criteria
@@ -24,6 +25,7 @@ Do not call the work complete if any of the following still happens:
 - scrolling past the giant long-text row causes visible layout corruption
 - row content flashes, duplicates, or shows stale reused state
 - the app becomes briefly unresponsive during basic scroll, toggle, or resize interactions
+- loading more rows at the bottom clips visible content, resets existing dynamic row heights, or jumps to an unrelated position
 
 ## Test Setup
 
@@ -193,6 +195,21 @@ This row is intentionally much taller than the viewport.
 - [ ] Watch for any row showing another row's text, tags, or controls after aggressive scrolling.
   Expected: no stale reuse artifacts.
 
+### 9. Infinite Bottom Loading
+
+- [ ] Scroll to the bottom sentinel and stop for at least 2 seconds.
+  Expected: the loading row appears, waits, then appends another batch of rows.
+- [ ] After the first append completes, continue scrolling to the new bottom and wait again.
+  Expected: another batch appends; there is no fixed maximum row count.
+- [ ] Confirm the overview count increases by the batch size after each append.
+  Expected: row count changes from `1000` to `1250`, then `1500`, and so on.
+- [ ] Expand/collapse a dynamic row, then scroll to the bottom and trigger a load.
+  Expected: existing measured rows keep correct heights; no stale expanded/collapsed gaps are reintroduced.
+- [ ] Press `Regenerate Rows` while the bottom loader is visible or actively waiting.
+  Expected: the pending load is ignored, the list resets to the initial row count, and no old batch appends afterward.
+- [ ] Resize the window after at least one load-more batch has appended.
+  Expected: newly appended rows reflow like the original rows without clipping or overlap.
+
 ## Known Historical Regression Checklist
 
 These regressions have already happened and must be rechecked every time:
@@ -207,6 +224,7 @@ These regressions have already happened and must be rechecked every time:
 - [ ] The collection leaves a large dead area at the bottom after content shrinks.
 - [ ] Visible rows flash or redraw stale content during relayout.
 - [ ] Manual window resizing stops behaving like real width-driven reflow.
+- [ ] Appending rows for infinite scrolling clears existing measured heights and causes clipping or stale gaps.
 
 ## Performance / UX Checks
 
