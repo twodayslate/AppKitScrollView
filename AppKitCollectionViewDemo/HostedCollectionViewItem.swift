@@ -75,7 +75,7 @@ private struct IdentifiedHostedRootView: View {
             .background(
                 HostedHeightReporter(onMeasuredHeightChange: onMeasuredHeightChange)
             )
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .id(id)
     }
 }

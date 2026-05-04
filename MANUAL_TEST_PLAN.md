@@ -78,6 +78,20 @@ Validated from layout logs:
 - Trend and disclosure toggles still settled with visible neighboring rows at `nextGap=14`.
 - No visible row-frame log showed a gap different from the configured `14` pt spacing.
 
+Targeted rapid-toggle validation was run on 2026-05-03 with:
+
+```sh
+swift build
+xcodebuild -project 'AppKitCollectionViewDemo.xcodeproj' -scheme 'AppKitCollectionViewDemo' -destination 'platform=macOS,arch=arm64' build CODE_SIGNING_ALLOWED=NO
+APPKIT_SCROLL_DEBUG_LAYOUT=1 APPKIT_SCROLL_AUTODEMO=1 AppKitCollectionViewDemo.app/Contents/MacOS/AppKitCollectionViewDemo
+```
+
+Validated from layout logs:
+
+- The fixed `Animation Lab Trend` row was toggled rapidly five times near the top of the list.
+- During every measured animation frame, the surrounding visible rows stayed at the configured `14` pt row gap.
+- The debug run specifically covered the regression where a same-identity SwiftUI update could reload visible AppKit items and briefly let a neighboring row paint over the rounded border.
+
 ## Blocking Scenarios
 
 These are the cases most likely to hide real regressions.
@@ -101,6 +115,12 @@ Use both the fixed `Animation Lab Trend` row and random trend rows lower in the 
   Expected: the extra space closes back to the normal row gap.
 - [ ] Repeat `Show Trend -> Hide Trend` 10 times on the same row.
   Expected: no cumulative spacing drift.
+- [ ] Rapidly click `Show Trend` / `Hide Trend` on the fixed `Animation Lab Trend` row.
+  Expected: the row settles to the correct final state, the border remains complete, and no stale partial trend section remains mounted.
+- [ ] Watch the fixed `Animation Lab Trend` row during the transition, not just after it settles.
+  Expected: the top edge keeps rounded corners throughout the animation and is never clipped flat by the collection cell.
+- [ ] Inspect frame-by-frame during rapid `Animation Lab Trend` toggles when possible.
+  Expected: the previous row never paints over the trend row's top-left or top-right rounded border, even between measured height commits.
 - [ ] Toggle a trend row while it is near the bottom edge of the viewport.
   Expected: the scroll anchor remains stable and the row does not get clipped.
 - [ ] Toggle a trend row while it is near the top edge of the viewport.
@@ -216,6 +236,9 @@ These regressions have already happened and must be rechecked every time:
 
 - [ ] `Hide Trend -> Show Trend` causes overlap.
 - [ ] `Show Trend -> Hide Trend` leaves a gap larger than the row spacing.
+- [ ] Rapid trend toggles leave the `Animation Lab Trend` border clipped or the row in a partial animation state.
+- [ ] The `Animation Lab Trend` top border turns flat during animation because the hosted SwiftUI root is vertically centered inside a shorter AppKit item.
+- [ ] A same-ID SwiftUI update reloads visible AppKit items and lets the preceding row cover the `Animation Lab Trend` rounded border mid-animation.
 - [ ] Disclosure collapse leaves stale empty space.
 - [ ] Expanding a row clips the next row.
 - [ ] First launch shows clipped or partially measured rows near the top.

@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 /// Root container that opts out of width-based fitting so SwiftUI can shrink the window normally.
@@ -255,6 +256,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     private var pendingLiveHeightCommit: DispatchWorkItem?
     private var pendingLiveHeightUpdates: [AnyHashable: CGFloat] = [:]
     private var pendingAnimatedMeasurements: [DispatchWorkItem] = []
+    private var pendingTrailingAnimatedMeasurement: DispatchWorkItem?
     private var automaticLayoutAnimationDeadline = Date.distantPast
     private var pendingLiveHeightResets: [AnyHashable: DispatchWorkItem] = [:]
     private var hasAppliedInitialScrollPosition = false
@@ -361,10 +363,11 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
 
         let visibleIndexPaths = collectionView.indexPathsForVisibleItems()
         if visibleIndexPaths.isEmpty {
-            collectionView.reloadData()
-        } else {
-            collectionView.reloadItems(at: visibleIndexPaths)
+            return
         }
+
+        reconfigureVisibleItems(at: visibleIndexPaths)
+        requestVisibleHostedMeasurements()
     }
 
     private func configureCollectionView() {
@@ -479,10 +482,25 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
     }
 
+    /// Keeps AppKit item frames in lock-step with SwiftUI's measured height frames instead of letting implicit layer
+    /// animations briefly overlap neighboring collection items.
+    private func performWithoutImplicitAppKitAnimation(_ updates: () -> Void) {
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = 0
+        NSAnimationContext.current.allowsImplicitAnimation = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updates()
+        CATransaction.commit()
+        NSAnimationContext.endGrouping()
+    }
+
     private func invalidateLayout() {
-        collectionView.collectionViewLayout?.invalidateLayout()
-        collectionView.layoutSubtreeIfNeeded()
-        updateCollectionViewHeight()
+        performWithoutImplicitAppKitAnimation {
+            collectionView.collectionViewLayout?.invalidateLayout()
+            collectionView.layoutSubtreeIfNeeded()
+            updateCollectionViewHeight()
+        }
     }
 
     /// Nudges existing visible hosts to lay out at the new width without reloading the SwiftUI subtree.
@@ -493,6 +511,26 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             }
 
             hostedItem.requestLiveHeightMeasurement()
+        }
+    }
+
+    /// Updates visible hosting views in place so state-driven SwiftUI changes do not trigger AppKit item replacement.
+    private func reconfigureVisibleItems(at indexPaths: Set<IndexPath>) {
+        performWithoutImplicitAppKitAnimation {
+            for indexPath in indexPaths where indexPath.item < items.count {
+                guard let item = collectionView.item(at: indexPath) as? HostedCollectionViewItem else {
+                    continue
+                }
+
+                let descriptor = items[indexPath.item]
+                item.configure(
+                    id: descriptor.id,
+                    rootView: descriptor.rootView,
+                    onMeasuredHeightChange: { [weak self] measuredHeight in
+                        self?.recordMeasuredHeightChange(for: descriptor.id, measuredHeight: measuredHeight)
+                    }
+                )
+            }
         }
     }
 
@@ -510,6 +548,8 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     }
 
     private func cancelAnimatedMeasurements() {
+        pendingTrailingAnimatedMeasurement?.cancel()
+        pendingTrailingAnimatedMeasurement = nil
         pendingAnimatedMeasurements.forEach { $0.cancel() }
         pendingAnimatedMeasurements.removeAll(keepingCapacity: false)
     }
@@ -540,13 +580,30 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             return
         }
 
+        let duration = 0.34
         let now = Date()
-        guard now >= automaticLayoutAnimationDeadline else {
+
+        if now >= automaticLayoutAnimationDeadline {
+            pendingTrailingAnimatedMeasurement?.cancel()
+            pendingTrailingAnimatedMeasurement = nil
+            automaticLayoutAnimationDeadline = now.addingTimeInterval(duration)
+            animateVisibleLayout(duration: duration)
             return
         }
 
-        automaticLayoutAnimationDeadline = now.addingTimeInterval(0.34)
-        animateVisibleLayout(duration: 0.34)
+        pendingTrailingAnimatedMeasurement?.cancel()
+        let delay = automaticLayoutAnimationDeadline.timeIntervalSince(now)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.pendingTrailingAnimatedMeasurement = nil
+            self.automaticLayoutAnimationDeadline = Date().addingTimeInterval(duration)
+            self.animateVisibleLayout(duration: duration)
+        }
+        pendingTrailingAnimatedMeasurement = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     /// Coalesces multiple live SwiftUI height reports into one AppKit relayout per runloop.

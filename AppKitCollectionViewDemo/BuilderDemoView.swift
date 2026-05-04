@@ -400,9 +400,10 @@ private struct BuilderTrendAnimationLabCard: View {
                     return
                 }
 
-                for _ in 0..<3 {
+                let toggleDelaysInMilliseconds = [800, 90, 90, 90, 90, 90, 90]
+                for delay in toggleDelaysInMilliseconds {
                     do {
-                        try await Task.sleep(for: .milliseconds(800))
+                        try await Task.sleep(for: .milliseconds(delay))
                     } catch {
                         return
                     }
@@ -586,7 +587,7 @@ private struct ChatBubbleRow: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(accent.opacity(0.35), lineWidth: 1)
+                    .strokeBorder(accent.opacity(0.35), lineWidth: 1)
             )
 
             if !model.isOutgoing {
@@ -663,6 +664,7 @@ private struct TrendPanelRow: View {
     @State private var rendersTrendSection: Bool
     @State private var trendRevealProgress: CGFloat
     @State private var trendContentHeight: CGFloat
+    @State private var collapseCleanupTask: Task<Void, Never>?
 
     private let trendAnimation = Animation.easeInOut(duration: 0.34)
     private var fallbackTrendContentHeight: CGFloat {
@@ -779,9 +781,16 @@ private struct TrendPanelRow: View {
         .onChange(of: model.showsTrend) { _, showsTrend in
             applyTrendVisibility(showsTrend)
         }
+        .onDisappear {
+            collapseCleanupTask?.cancel()
+            collapseCleanupTask = nil
+        }
     }
 
     private func applyTrendVisibility(_ showsTrend: Bool) {
+        collapseCleanupTask?.cancel()
+        collapseCleanupTask = nil
+
         if showsTrend {
             if !rendersTrendSection {
                 rendersTrendSection = true
@@ -796,6 +805,21 @@ private struct TrendPanelRow: View {
         }
 
         withAnimation(trendAnimation) {
+            trendRevealProgress = 0
+        }
+
+        collapseCleanupTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(380))
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled, !model.showsTrend else {
+                return
+            }
+
+            rendersTrendSection = false
             trendRevealProgress = 0
         }
     }
@@ -823,7 +847,7 @@ private struct DemoSurface<Content: View>: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(accent.opacity(0.35), lineWidth: 1)
+                    .strokeBorder(accent.opacity(0.35), lineWidth: 1)
             )
     }
 }
