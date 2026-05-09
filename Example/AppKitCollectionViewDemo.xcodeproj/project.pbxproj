@@ -10,13 +10,11 @@
 		1D4E4E642BC7B60100A0A001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E632BC7B60100A0A001 /* main.swift */; };
 		1D4E4E662BC7B60100A0A001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E652BC7B60100A0A001 /* AppDelegate.swift */; };
 		1D4E4E682BC7B60100A0A001 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E672BC7B60100A0A001 /* MainWindowController.swift */; };
-		1D4E4E6A2BC7B60100A0A001 /* CollectionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E692BC7B60100A0A001 /* CollectionViewController.swift */; };
 		1D4E4E6C2BC7B60100A0A001 /* VerticalListCollectionLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E6B2BC7B60100A0A001 /* VerticalListCollectionLayout.swift */; };
 		1D4E4E6E2BC7B60100A0A001 /* HostedCollectionViewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */; };
-		1D4E4E702BC7B60100A0A001 /* DemoCells.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E6F2BC7B60100A0A001 /* DemoCells.swift */; };
-		1D4E4E792BC7B60100A0A001 /* DemoCellMeasurer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E782BC7B60100A0A001 /* DemoCellMeasurer.swift */; };
 		1D4E4E7B2BC7B60100A0A001 /* AppKitScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */; };
 		1D4E4E7D2BC7B60100A0A001 /* BuilderDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E7C2BC7B60100A0A001 /* BuilderDemoView.swift */; };
+		1D4E4E842BC7B60100A0A001 /* AppKitSelectableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D4E4E832BC7B60100A0A001 /* AppKitSelectableText.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,14 +22,12 @@
 		1D4E4E632BC7B60100A0A001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		1D4E4E652BC7B60100A0A001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		1D4E4E672BC7B60100A0A001 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
-		1D4E4E692BC7B60100A0A001 /* CollectionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionViewController.swift; sourceTree = "<group>"; };
 		1D4E4E6B2BC7B60100A0A001 /* VerticalListCollectionLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerticalListCollectionLayout.swift; sourceTree = "<group>"; };
 		1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedCollectionViewItem.swift; sourceTree = "<group>"; };
-		1D4E4E6F2BC7B60100A0A001 /* DemoCells.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoCells.swift; sourceTree = "<group>"; };
-		1D4E4E782BC7B60100A0A001 /* DemoCellMeasurer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoCellMeasurer.swift; sourceTree = "<group>"; };
 		1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppKitScrollView.swift; sourceTree = "<group>"; };
 		1D4E4E7C2BC7B60100A0A001 /* BuilderDemoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuilderDemoView.swift; sourceTree = "<group>"; };
 		1D4E4E712BC7B60100A0A001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1D4E4E832BC7B60100A0A001 /* AppKitSelectableText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppKitSelectableText.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -48,6 +44,7 @@
 		1D4E4E532BC7B60100A0A001 = {
 			isa = PBXGroup;
 			children = (
+				1D4E4E802BC7B60100A0A001 /* Sources */,
 				1D4E4E5E2BC7B60100A0A001 /* AppKitCollectionViewDemo */,
 				1D4E4E5D2BC7B60100A0A001 /* Products */,
 			);
@@ -68,15 +65,28 @@
 				1D4E4E632BC7B60100A0A001 /* main.swift */,
 				1D4E4E652BC7B60100A0A001 /* AppDelegate.swift */,
 				1D4E4E672BC7B60100A0A001 /* MainWindowController.swift */,
-				1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */,
 				1D4E4E7C2BC7B60100A0A001 /* BuilderDemoView.swift */,
-				1D4E4E692BC7B60100A0A001 /* CollectionViewController.swift */,
-				1D4E4E6B2BC7B60100A0A001 /* VerticalListCollectionLayout.swift */,
-				1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */,
-				1D4E4E6F2BC7B60100A0A001 /* DemoCells.swift */,
-				1D4E4E782BC7B60100A0A001 /* DemoCellMeasurer.swift */,
 			);
 			path = AppKitCollectionViewDemo;
+			sourceTree = "<group>";
+		};
+		1D4E4E802BC7B60100A0A001 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				1D4E4E812BC7B60100A0A001 /* AppKitScrollView */,
+			);
+			path = ../Sources;
+			sourceTree = "<group>";
+		};
+		1D4E4E812BC7B60100A0A001 /* AppKitScrollView */ = {
+			isa = PBXGroup;
+			children = (
+				1D4E4E7A2BC7B60100A0A001 /* AppKitScrollView.swift */,
+				1D4E4E832BC7B60100A0A001 /* AppKitSelectableText.swift */,
+				1D4E4E6D2BC7B60100A0A001 /* HostedCollectionViewItem.swift */,
+				1D4E4E6B2BC7B60100A0A001 /* VerticalListCollectionLayout.swift */,
+			);
+			path = AppKitScrollView;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -147,11 +157,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				1D4E4E662BC7B60100A0A001 /* AppDelegate.swift in Sources */,
+				1D4E4E842BC7B60100A0A001 /* AppKitSelectableText.swift in Sources */,
 				1D4E4E7B2BC7B60100A0A001 /* AppKitScrollView.swift in Sources */,
 				1D4E4E7D2BC7B60100A0A001 /* BuilderDemoView.swift in Sources */,
-				1D4E4E6A2BC7B60100A0A001 /* CollectionViewController.swift in Sources */,
-				1D4E4E702BC7B60100A0A001 /* DemoCells.swift in Sources */,
-				1D4E4E792BC7B60100A0A001 /* DemoCellMeasurer.swift in Sources */,
 				1D4E4E6E2BC7B60100A0A001 /* HostedCollectionViewItem.swift in Sources */,
 				1D4E4E682BC7B60100A0A001 /* MainWindowController.swift in Sources */,
 				1D4E4E642BC7B60100A0A001 /* main.swift in Sources */,
@@ -213,7 +221,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -234,7 +243,8 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};

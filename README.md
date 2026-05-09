@@ -38,11 +38,12 @@ AppKitScrollView { context in
 - Measures visible rows offscreen so dynamic-height content lays out correctly
 - Preserves the viewport anchor during relayout so height changes do not throw the scroll position around
 - Exposes a proxy-style context for scrolling and explicit relayout invalidation
+- Provides a shared AppKit-backed text selection coordinator for selectable text across rows
 
 ## Requirements
 
 - macOS 15+
-- Xcode 16+ / Swift 5.10+
+- Xcode 16+ / Swift 6.0+
 
 The package currently targets macOS 15 because the clean builder flattening API depends on `Group(subviews:)`.
 
@@ -129,35 +130,76 @@ Use:
 - `invalidateLayout()` only as an escape hatch for unusual cases where height changes come from something the host cannot observe directly
 - `animateLayout(duration:)` only when you want to explicitly coordinate AppKit relayout timing with some custom animation behavior
 
+### Text Selection
+
+`AppKitScrollView` owns a shared Textual-style selection coordinator for every hosted row. Selection is opt in at the text-fragment level:
+
+```swift
+AppKitSelectableText(message.body)
+    .appKitFont(.systemFont(ofSize: 15, weight: .medium))
+    .foregroundStyle(.secondary)
+    .appKitTextSelection(.enabled)
+```
+
+The modifier intentionally mirrors SwiftUI's `textSelection(_:)` shape, but it feeds the `AppKitScrollView` selection environment instead of SwiftUI's native per-view selection system. This matters for cross-card selection: the scroll view needs one shared selection owner, while individual text fragments only opt in and report their local text and layout information.
+
+Use `.appKitTextSelection(.enabled)` on `AppKitSelectableText` fragments or other fragments that are built to cooperate with the `AppKitScrollView` selection model. Plain SwiftUI `Text` does not participate just because the modifier is present.
+
+`AppKitScrollView` automatically installs the selection coordinator for its rows and assigns each top-level row an ordering base. When multiple selectable fragments live inside the same card, use `appKitTextSelectionOrder(_:)` to keep copy order deterministic within that card:
+
+```swift
+VStack(alignment: .leading) {
+    AppKitSelectableText(summary)
+        .appKitFont(.systemFont(ofSize: 15, weight: .medium))
+        .foregroundStyle(.secondary)
+        .appKitTextSelection(.enabled)
+
+    AppKitSelectableText(details)
+        .appKitFont(.systemFont(ofSize: 15, weight: .medium))
+        .foregroundStyle(.secondary)
+        .appKitTextSelection(.enabled)
+        .appKitTextSelectionOrder(1)
+}
+```
+
+Selectable fragments share one controller, so users can drag from text in one card into text in another card, copy the selected text with Command-C, and use Select All from the active selectable text view with Command-A or Control-A.
+
+`AppKitSelectableText` supports SwiftUI-shaped call sites for selection, fixed sizing, and direct color styling through `.foregroundStyle(_:)` or `.foregroundColor(_:)`. It currently uses TextKit under the hood, so SwiftUI's opaque `Font` environment cannot be converted into `NSFont`; use `.appKitFont(_:)` when you need a specific AppKit font. A future implementation can move toward a `Text.Layout` collection model like Textual so more native SwiftUI text styling can participate directly.
+
+If you need to use selectable fragments outside `AppKitScrollView`, install the same shared selection environment with `appKitSelectionContainer()`:
+
+```swift
+VStack(alignment: .leading) {
+    AppKitSelectableText(title)
+        .appKitTextSelection(.enabled)
+
+    AppKitSelectableText(body)
+        .appKitTextSelection(.enabled)
+        .appKitTextSelectionOrder(1)
+}
+.appKitSelectionContainer()
+```
+
 ## Example Project
 
-The repository keeps the demo app in `AppKitCollectionViewDemo.xcodeproj`. It exercises:
+The repository keeps the demo app in `Example/AppKitCollectionViewDemo.xcodeproj`. It exercises:
 
 - 1000 heterogeneous rows
 - `if / else` builder branches
 - `ForEach` flattening
 - dynamic disclosure and trend sections
+- library-owned cross-card text selection
 - aggressive resize and relayout behavior
 
 Open the project and run the `AppKitCollectionViewDemo` scheme to inspect the behavior interactively.
 
 The manual sign-off checklist lives in [`MANUAL_TEST_PLAN.md`](MANUAL_TEST_PLAN.md).
 
-## Repository Layout
-
-- `Package.swift`: Swift package definition
-- `AppKitCollectionViewDemo/AppKitScrollView.swift`: public SwiftUI surface and AppKit host
-- `AppKitCollectionViewDemo/HostedCollectionViewItem.swift`: reusable hosting item
-- `AppKitCollectionViewDemo/VerticalListCollectionLayout.swift`: single-column collection layout
-- `AppKitCollectionViewDemo/DemoCellMeasurer.swift`: offscreen SwiftUI measurement
-
-The package and the demo app intentionally share the core implementation files so the example stays representative of the published package.
-
 ## CI
 
 The GitHub Actions workflow at `.github/workflows/build.yml` runs:
 
 - `swift build` for the package
-- `xcodebuild` for the example project
+- `xcodebuild` for `Example/AppKitCollectionViewDemo.xcodeproj`
 
 That keeps the package surface and the example app from drifting apart.

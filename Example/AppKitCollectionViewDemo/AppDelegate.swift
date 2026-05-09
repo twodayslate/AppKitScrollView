@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    @MainActor
     private func installMainMenu() {
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()

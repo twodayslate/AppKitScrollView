@@ -45,6 +45,18 @@ final class VerticalListCollectionLayout: NSCollectionViewLayout {
         return sectionInsets.left + floor(remainingWidth / 2)
     }
 
+    private func backingScale(for collectionView: NSCollectionView) -> CGFloat {
+        collectionView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+
+    private func pixelRound(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+        (value * scale).rounded() / scale
+    }
+
+    private func pixelCeil(_ value: CGFloat, scale: CGFloat) -> CGFloat {
+        ceil(value * scale) / scale
+    }
+
     /// Builds and caches item frames for the current width, keeping content at least as tall as the viewport.
     override func prepare() {
         guard let collectionView else {
@@ -63,6 +75,7 @@ final class VerticalListCollectionLayout: NSCollectionViewLayout {
 
         let visibleWidth = max(collectionView.bounds.width, collectionView.enclosingScrollView?.contentSize.width ?? 0)
         let viewportHeight = max(collectionView.enclosingScrollView?.contentSize.height ?? 0, 0)
+        let scale = backingScale(for: collectionView)
         let itemWidth = itemContentWidth(for: visibleWidth)
         let itemCount = collectionView.numberOfItems(inSection: 0)
 
@@ -77,15 +90,21 @@ final class VerticalListCollectionLayout: NSCollectionViewLayout {
 
         for item in 0..<itemCount {
             let indexPath = IndexPath(item: item, section: 0)
-            let height = max(delegate?.collectionViewLayout(self, heightForItemAt: item, width: itemWidth) ?? 80, 44)
-            let frame = NSRect(x: itemOriginX(for: visibleWidth), y: yOffset, width: itemWidth, height: height)
+            let measuredHeight = max(delegate?.collectionViewLayout(self, heightForItemAt: item, width: itemWidth) ?? 80, 44)
+            let height = pixelCeil(measuredHeight, scale: scale)
+            let frame = NSRect(
+                x: pixelRound(itemOriginX(for: visibleWidth), scale: scale),
+                y: pixelRound(yOffset, scale: scale),
+                width: pixelRound(itemWidth, scale: scale),
+                height: height
+            )
 
             let attributes = NSCollectionViewLayoutAttributes(forItemWith: indexPath)
             attributes.frame = frame
 
             cachedAttributes[indexPath] = attributes
             orderedAttributes.append(attributes)
-            yOffset += height + itemSpacing
+            yOffset = frame.maxY + itemSpacing
         }
 
         if itemCount > 0 {
@@ -96,12 +115,41 @@ final class VerticalListCollectionLayout: NSCollectionViewLayout {
         preparedItemCount = itemCount
         contentSize = NSSize(
             width: max(visibleWidth, sectionInsets.left + sectionInsets.right + itemWidth),
-            height: max(yOffset + sectionInsets.bottom, viewportHeight)
+            height: max(pixelCeil(yOffset + sectionInsets.bottom, scale: scale), viewportHeight)
         )
     }
 
     override func layoutAttributesForElements(in rect: NSRect) -> [NSCollectionViewLayoutAttributes] {
-        orderedAttributes.filter { $0.frame.intersects(rect) }
+        guard !orderedAttributes.isEmpty else {
+            return []
+        }
+
+        var lowerBound = 0
+        var upperBound = orderedAttributes.count
+        while lowerBound < upperBound {
+            let midpoint = lowerBound + ((upperBound - lowerBound) / 2)
+            if orderedAttributes[midpoint].frame.maxY < rect.minY {
+                lowerBound = midpoint + 1
+            } else {
+                upperBound = midpoint
+            }
+        }
+
+        var visibleAttributes: [NSCollectionViewLayoutAttributes] = []
+        var index = lowerBound
+        while index < orderedAttributes.count {
+            let attributes = orderedAttributes[index]
+            if attributes.frame.minY > rect.maxY {
+                break
+            }
+
+            if attributes.frame.intersects(rect) {
+                visibleAttributes.append(attributes)
+            }
+            index += 1
+        }
+
+        return visibleAttributes
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> NSCollectionViewLayoutAttributes? {

@@ -15,23 +15,8 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AppKitScrollView",
-            path: "AppKitCollectionViewDemo",
-            exclude: [
-                "AppDelegate.swift",
-                "BuilderDemoView.swift",
-                "CollectionViewController.swift",
-                "DemoCells.swift",
-                "Info.plist",
-                "MainWindowController.swift",
-                "main.swift"
-            ],
-            sources: [
-                "AppKitScrollView.swift",
-                "DemoCellMeasurer.swift",
-                "HostedCollectionViewItem.swift",
-                "VerticalListCollectionLayout.swift"
-            ]
+            name: "AppKitScrollView"
         )
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

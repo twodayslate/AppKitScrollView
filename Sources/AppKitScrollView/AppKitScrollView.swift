@@ -107,6 +107,9 @@ public extension EnvironmentValues {
         get { self[AppKitScrollViewContextEnvironmentKey.self] }
         set { self[AppKitScrollViewContextEnvironmentKey.self] = newValue }
     }
+
+    /// Enables the AppKitScrollView text-selection system for cooperating text fragments.
+    @Entry var appKitTextSelectionEnabled = false
 }
 
 private struct AppKitScrollTargetID: @unchecked Sendable {
@@ -129,6 +132,11 @@ public extension View {
     /// Marks a child view as a scroll target for `AppKitScrollViewContext.scrollTo`.
     func appKitScrollTarget<ID: Hashable>(_ id: ID) -> some View {
         containerValue(\.appKitScrollTargetID, AppKitScrollTargetID(rawValue: AnyHashable(id)))
+    }
+
+    /// Opts cooperating text fragments into the AppKitScrollView text-selection system.
+    func appKitTextSelection<S: TextSelectability>(_ selectability: S) -> some View {
+        environment(\.appKitTextSelectionEnabled, type(of: selectability).allowsSelection)
     }
 }
 
@@ -160,6 +168,7 @@ private struct HostedSubviewDescriptor: Identifiable {
 @available(macOS 15.0, *)
 public struct AppKitScrollView<Content: View>: View {
     @StateObject private var context = AppKitScrollViewContext()
+    @StateObject private var textSelectionController = AppKitTextSelectionController()
 
     private let configuration: AppKitScrollViewConfiguration
     private let content: (AppKitScrollViewContext) -> Content
@@ -198,15 +207,20 @@ public struct AppKitScrollView<Content: View>: View {
     }
 
     public var body: some View {
-        Group(subviews: content(context).environment(\.appKitScrollViewContext, context)) { subviews in
+        Group(
+            subviews: content(context)
+                .environment(\.appKitScrollViewContext, context)
+                .environment(\.appKitTextSelectionController, textSelectionController)
+        ) { subviews in
             AppKitScrollViewRepresentable(
                 context: context,
                 configuration: configuration,
-                descriptors: subviews.map { subview in
-                    HostedSubviewDescriptor(
+                descriptors: subviews.indices.map { index in
+                    let subview = subviews[index]
+                    return HostedSubviewDescriptor(
                         id: subview.containerValues.appKitScrollTargetID?.rawValue ?? AnyHashable(subview.id),
                         estimatedHeight: configuration.estimatedRowHeight,
-                        rootView: AnyView(subview)
+                        rootView: AnyView(subview.environment(\.appKitTextSelectionBaseOrder, index * 1_000))
                     )
                 }
             )
@@ -249,16 +263,12 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     private var configuration: AppKitScrollViewConfiguration
     private var items: [HostedSubviewDescriptor] = []
     private var cachedHeights: [AnyHashable: CGFloat] = [:]
-    private var liveVisibleHeights: [AnyHashable: CGFloat] = [:]
+    private var animationDisplayLink: CADisplayLink?
+    private var animatedMeasurementDeadline: CFTimeInterval?
+    private var pendingLiveVisibleHeights: [AnyHashable: CGFloat] = [:]
     private var boundsObserver: NSObjectProtocol?
     private var measurementWidth: CGFloat = 0
     private var pendingVisibleMeasurement: DispatchWorkItem?
-    private var pendingLiveHeightCommit: DispatchWorkItem?
-    private var pendingLiveHeightUpdates: [AnyHashable: CGFloat] = [:]
-    private var pendingAnimatedMeasurements: [DispatchWorkItem] = []
-    private var pendingTrailingAnimatedMeasurement: DispatchWorkItem?
-    private var automaticLayoutAnimationDeadline = Date.distantPast
-    private var pendingLiveHeightResets: [AnyHashable: DispatchWorkItem] = [:]
     private var hasAppliedInitialScrollPosition = false
 
     init(configuration: AppKitScrollViewConfiguration) {
@@ -269,6 +279,15 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            animationDisplayLink?.invalidate()
+        }
     }
 
     override func loadView() {
@@ -287,16 +306,16 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         syncCollectionViewGeometry()
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
-        remeasureVisibleItems(forceAll: true, extraScreens: 1)
+        requestVisibleHostedMeasurements()
         logVisibleLayoutIfNeeded(reason: "viewWillAppear")
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
         pendingVisibleMeasurement?.cancel()
-        pendingLiveHeightCommit?.cancel()
+        pendingVisibleMeasurement = nil
+        pendingLiveVisibleHeights.removeAll(keepingCapacity: true)
         cancelAnimatedMeasurements()
-        cancelLiveHeightResets()
     }
 
     override func viewDidLayout() {
@@ -319,7 +338,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
 
             self.scrollView.contentView.scroll(to: .zero)
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
-            self.scheduleVisibleMeasurement(forceAll: true)
+            self.scheduleVisibleMeasurement()
         }
     }
 
@@ -335,12 +354,13 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
 
         self.configuration = configuration
+        pendingVisibleMeasurement?.cancel()
+        pendingVisibleMeasurement = nil
         applyConfiguration()
         bindContext()
         cachedHeights.removeAll(keepingCapacity: true)
-        liveVisibleHeights.removeAll(keepingCapacity: true)
-        pendingLiveHeightUpdates.removeAll(keepingCapacity: true)
-        cancelLiveHeightResets()
+        pendingLiveVisibleHeights.removeAll(keepingCapacity: true)
+        cancelAnimatedMeasurements()
         invalidateLayout()
     }
 
@@ -357,7 +377,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             removeMeasurementsForDeletedItems(remainingIDs: Set(nextIDs))
             collectionView.reloadData()
             invalidateLayout()
-            scheduleVisibleMeasurement(forceAll: true)
+            scheduleVisibleMeasurement()
             return
         }
 
@@ -434,7 +454,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
                 self?.scrollToBottom(anchor: anchor)
             },
             invalidateLayoutHandler: { [weak self] in
-                self?.scheduleVisibleMeasurement(forceAll: true)
+                self?.scheduleVisibleMeasurement()
             },
             animateLayoutHandler: { [weak self] duration in
                 self?.animateVisibleLayout(duration: duration)
@@ -457,16 +477,14 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         let currentMeasurementWidth = layout.itemContentWidth(for: availableViewportWidth)
         if abs(currentMeasurementWidth - measurementWidth) > 1 {
             measurementWidth = currentMeasurementWidth
-            liveVisibleHeights.removeAll(keepingCapacity: true)
-            pendingLiveHeightUpdates.removeAll(keepingCapacity: true)
-            cancelLiveHeightResets()
+            pendingLiveVisibleHeights.removeAll(keepingCapacity: true)
             invalidateLayout()
             requestVisibleHostedMeasurements()
-            scheduleVisibleMeasurement(forceAll: true, delay: 0.08)
+            scheduleVisibleMeasurement(delay: 0.08)
         } else if didChangeDocumentWidth {
             invalidateLayout()
             requestVisibleHostedMeasurements()
-            scheduleVisibleMeasurement(forceAll: true, delay: 0.08)
+            scheduleVisibleMeasurement(delay: 0.08)
         } else {
             updateCollectionViewHeight()
         }
@@ -480,6 +498,23 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         if abs(collectionView.frame.height - targetHeight) > 0.5 {
             collectionView.setFrameSize(NSSize(width: collectionView.frame.width, height: targetHeight))
         }
+    }
+
+    private var backingScaleFactor: CGFloat {
+        max(view.window?.backingScaleFactor ?? scrollView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2, 1)
+    }
+
+    private func pixelRound(_ value: CGFloat) -> CGFloat {
+        let scale = backingScaleFactor
+        return (value * scale).rounded() / scale
+    }
+
+    private func pixelAlignedScrollOrigin(x: CGFloat, y: CGFloat, maxY: CGFloat) -> NSPoint {
+        let clampedY = min(max(y, 0), maxY)
+        return NSPoint(
+            x: pixelRound(x),
+            y: min(max(pixelRound(clampedY), 0), maxY)
+        )
     }
 
     /// Keeps AppKit item frames in lock-step with SwiftUI's measured height frames instead of letting implicit layer
@@ -501,6 +536,49 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             collectionView.layoutSubtreeIfNeeded()
             updateCollectionViewHeight()
         }
+    }
+
+    private var displayMatchedFrameInterval: TimeInterval {
+        let screen = view.window?.screen ?? scrollView.window?.screen ?? NSScreen.main
+        let reportedFPS = screen?.maximumFramesPerSecond ?? 60
+        let fps = min(max(reportedFPS, 30), 240)
+        return 1.0 / Double(fps)
+    }
+
+    private func startAnimationDisplayLinkIfNeeded() {
+        guard animationDisplayLink == nil else {
+            return
+        }
+
+        let displayLink = view.displayLink(target: self, selector: #selector(animationDisplayLinkDidFire(_:)))
+        displayLink.add(to: .main, forMode: .common)
+        animationDisplayLink = displayLink
+    }
+
+    private func stopAnimationDisplayLinkIfIdle() {
+        guard pendingLiveVisibleHeights.isEmpty, animatedMeasurementDeadline == nil else {
+            return
+        }
+
+        animationDisplayLink?.invalidate()
+        animationDisplayLink = nil
+    }
+
+    @objc private func animationDisplayLinkDidFire(_ displayLink: CADisplayLink) {
+        let timestamp = displayLink.timestamp > 0 ? displayLink.timestamp : CACurrentMediaTime()
+
+        if let deadline = animatedMeasurementDeadline {
+            requestVisibleHostedMeasurements()
+            flushPendingLiveHeightChanges()
+
+            if timestamp >= deadline {
+                animatedMeasurementDeadline = nil
+            }
+        } else {
+            flushPendingLiveHeightChanges()
+        }
+
+        stopAnimationDisplayLinkIfIdle()
     }
 
     /// Nudges existing visible hosts to lay out at the new width without reloading the SwiftUI subtree.
@@ -534,10 +612,16 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
     }
 
-    private func scheduleVisibleMeasurement(forceAll: Bool = false, delay: TimeInterval = 0) {
+    private func scheduleVisibleMeasurement(delay: TimeInterval = 0) {
         pendingVisibleMeasurement?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
-            self?.remeasureVisibleItems(forceAll: forceAll, extraScreens: 0.75)
+            guard let self else {
+                return
+            }
+
+            self.pendingVisibleMeasurement = nil
+            self.requestVisibleHostedMeasurements()
+            self.flushPendingLiveHeightChanges()
         }
         pendingVisibleMeasurement = workItem
         if delay <= 0 {
@@ -548,212 +632,24 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
     }
 
     private func cancelAnimatedMeasurements() {
-        pendingTrailingAnimatedMeasurement?.cancel()
-        pendingTrailingAnimatedMeasurement = nil
-        pendingAnimatedMeasurements.forEach { $0.cancel() }
-        pendingAnimatedMeasurements.removeAll(keepingCapacity: false)
-    }
-
-    private func cancelLiveHeightResets() {
-        pendingLiveHeightResets.values.forEach { $0.cancel() }
-        pendingLiveHeightResets.removeAll(keepingCapacity: false)
+        animatedMeasurementDeadline = nil
+        stopAnimationDisplayLinkIfIdle()
     }
 
     /// Preserves measured heights for retained IDs while dropping stale state for removed builder children.
     private func removeMeasurementsForDeletedItems(remainingIDs: Set<AnyHashable>) {
         cachedHeights = cachedHeights.filter { remainingIDs.contains($0.key) }
-        liveVisibleHeights = liveVisibleHeights.filter { remainingIDs.contains($0.key) }
-        pendingLiveHeightUpdates = pendingLiveHeightUpdates.filter { remainingIDs.contains($0.key) }
-
-        for (itemID, workItem) in pendingLiveHeightResets where !remainingIDs.contains(itemID) {
-            workItem.cancel()
-            pendingLiveHeightResets[itemID] = nil
-        }
+        pendingLiveVisibleHeights = pendingLiveVisibleHeights.filter { remainingIDs.contains($0.key) }
+        stopAnimationDisplayLinkIfIdle()
     }
 
-    private func triggerAutomaticAnimatedLayoutIfNeeded(
-        for itemID: AnyHashable,
-        measuredHeight: CGFloat
-    ) {
-        let previousHeight = cachedHeights[itemID] ?? measuredHeight
-        guard abs(previousHeight - measuredHeight) > 1 else {
-            return
-        }
-
-        let duration = 0.34
-        let now = Date()
-
-        if now >= automaticLayoutAnimationDeadline {
-            pendingTrailingAnimatedMeasurement?.cancel()
-            pendingTrailingAnimatedMeasurement = nil
-            automaticLayoutAnimationDeadline = now.addingTimeInterval(duration)
-            animateVisibleLayout(duration: duration)
-            return
-        }
-
-        pendingTrailingAnimatedMeasurement?.cancel()
-        let delay = automaticLayoutAnimationDeadline.timeIntervalSince(now)
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-
-            self.pendingTrailingAnimatedMeasurement = nil
-            self.automaticLayoutAnimationDeadline = Date().addingTimeInterval(duration)
-            self.animateVisibleLayout(duration: duration)
-        }
-        pendingTrailingAnimatedMeasurement = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-    }
-
-    /// Coalesces multiple live SwiftUI height reports into one AppKit relayout per runloop.
-    private func scheduleLiveHeightCommit() {
-        guard pendingLiveHeightCommit == nil else {
-            return
-        }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.commitPendingLiveHeightUpdates()
-        }
-        pendingLiveHeightCommit = workItem
-        DispatchQueue.main.async(execute: workItem)
-    }
-
-    private func commitPendingLiveHeightUpdates() {
-        pendingLiveHeightCommit = nil
-        guard !pendingLiveHeightUpdates.isEmpty else {
-            return
-        }
-
-        let viewportAnchor = makeTopVisibleViewportAnchor()
-        var didChangeAnyHeight = false
-
-        for (itemID, measuredHeight) in pendingLiveHeightUpdates {
-            let previousHeight = cachedHeights[itemID]
-            guard previousHeight == nil || abs((previousHeight ?? 0) - measuredHeight) > 0.5 else {
-                continue
-            }
-
-            cachedHeights[itemID] = measuredHeight
-            didChangeAnyHeight = true
-        }
-
-        pendingLiveHeightUpdates.removeAll(keepingCapacity: true)
-        guard didChangeAnyHeight else {
-            return
-        }
-
-        invalidateLayout()
-        restoreViewportAnchor(viewportAnchor)
-        collectionView.needsDisplay = true
-        scrollView.contentView.needsDisplay = true
-        logVisibleLayoutIfNeeded(reason: "live-height-commit")
-    }
-
-    /// Re-measures visible rows across a short burst so AppKit height updates track SwiftUI expansion closely enough
-    /// to avoid visible step changes in neighboring rows.
+    /// Keeps visible hosted rows measuring on the display cadence during explicit SwiftUI animations.
     private func animateVisibleLayout(duration: TimeInterval) {
         cancelAnimatedMeasurements()
-        let extraScreens: CGFloat = 0.4
-        remeasureVisibleItems(forceAll: true, extraScreens: extraScreens, preferLiveVisibleHeights: true)
-
-        let frameInterval = 1.0 / 30.0
-        let checkpointCount = max(Int(ceil(duration / frameInterval)), 1)
-        let checkpoints = (1...checkpointCount).map { step in
-            duration * (Double(step) / Double(checkpointCount))
-        }
-
-        pendingAnimatedMeasurements = checkpoints.map { delay in
-            let workItem = DispatchWorkItem { [weak self] in
-                self?.remeasureVisibleItems(forceAll: true, extraScreens: extraScreens, preferLiveVisibleHeights: true)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-            return workItem
-        }
-    }
-
-    private func remeasureVisibleItems(forceAll: Bool, extraScreens: CGFloat, preferLiveVisibleHeights: Bool = false) {
-        guard !items.isEmpty else {
-            return
-        }
-
-        let width = max(measurementWidth, layout.itemContentWidth(for: max(scrollView.contentSize.width, 320)))
-        guard width > 0 else {
-            return
-        }
-
-        let viewportHeight = max(scrollView.contentSize.height, 1)
-        let visibleRect = collectionView.visibleRect
-        let expandedRect = NSRect(
-            x: visibleRect.origin.x,
-            y: max(visibleRect.origin.y - (viewportHeight * extraScreens), 0),
-            width: visibleRect.width,
-            height: visibleRect.height + (viewportHeight * extraScreens * 2)
-        )
-        var indexPaths = (collectionView.collectionViewLayout?.layoutAttributesForElements(in: expandedRect) ?? [])
-            .compactMap(\.indexPath)
-            .sorted(by: { $0.item < $1.item })
-
-        let tallLookaheadThreshold = viewportHeight * 2.5
-        let tallRowLookaheadCount = 8
-        let visibleAttributes = collectionView.collectionViewLayout?.layoutAttributesForElements(in: visibleRect) ?? []
-        if visibleAttributes.contains(where: { $0.frame.height >= tallLookaheadThreshold }) {
-            var extraIndexPaths = Set(indexPaths)
-
-            for attributes in visibleAttributes where attributes.frame.height >= tallLookaheadThreshold {
-                guard let tallIndexPath = attributes.indexPath else {
-                    continue
-                }
-
-                let lowerBound = max(tallIndexPath.item - 1, 0)
-                let upperBound = min(tallIndexPath.item + tallRowLookaheadCount, max(items.count - 1, 0))
-                guard lowerBound <= upperBound else {
-                    continue
-                }
-
-                for item in lowerBound...upperBound {
-                    extraIndexPaths.insert(IndexPath(item: item, section: 0))
-                }
-            }
-
-            indexPaths = extraIndexPaths.sorted(by: { $0.item < $1.item })
-        }
-
-        guard !indexPaths.isEmpty else {
-            return
-        }
-
-        let viewportAnchor = makeTopVisibleViewportAnchor()
-        var didChangeAnyHeight = false
-
-        for indexPath in indexPaths {
-            let descriptor = items[indexPath.item]
-            let measuredHeight: CGFloat
-
-            if let liveVisibleHeight = liveVisibleHeights[descriptor.id] {
-                measuredHeight = max(configuration.minimumRowHeight, ceil(liveVisibleHeight))
-            } else {
-                continue
-            }
-            let previousHeight = cachedHeights[descriptor.id]
-
-            guard previousHeight == nil || abs((previousHeight ?? 0) - measuredHeight) > 0.5 else {
-                continue
-            }
-
-            cachedHeights[descriptor.id] = measuredHeight
-            didChangeAnyHeight = true
-        }
-
-        guard didChangeAnyHeight else {
-            return
-        }
-
-        invalidateLayout()
-        restoreViewportAnchor(viewportAnchor)
-        collectionView.needsDisplay = true
-        scrollView.contentView.needsDisplay = true
-        logVisibleLayoutIfNeeded(reason: "visible-remeasure")
+        animatedMeasurementDeadline = CACurrentMediaTime() + max(duration, displayMatchedFrameInterval)
+        requestVisibleHostedMeasurements()
+        flushPendingLiveHeightChanges()
+        startAnimationDisplayLinkIfNeeded()
     }
 
     private func indexPath(for id: AnyHashable) -> IndexPath? {
@@ -762,21 +658,6 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
 
         return IndexPath(item: itemIndex, section: 0)
-    }
-
-    private func makeViewportAnchor(for id: AnyHashable) -> ViewportAnchor? {
-        guard
-            let indexPath = indexPath(for: id),
-            let attributes = collectionView.collectionViewLayout?.layoutAttributesForItem(at: indexPath)
-        else {
-            return nil
-        }
-
-        let visibleRect = collectionView.visibleRect
-        return ViewportAnchor(
-            indexPath: indexPath,
-            topOffset: attributes.frame.minY - visibleRect.minY
-        )
     }
 
     private func makeTopVisibleViewportAnchor() -> ViewportAnchor? {
@@ -807,14 +688,48 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         let clipView = scrollView.contentView
         let targetOriginY = attributes.frame.minY - anchor.topOffset
         let maxOriginY = max(collectionView.frame.height - clipView.bounds.height, 0)
-        let clampedOriginY = min(max(targetOriginY, 0), maxOriginY)
+        let targetOrigin = pixelAlignedScrollOrigin(
+            x: clipView.bounds.origin.x,
+            y: targetOriginY,
+            maxY: maxOriginY
+        )
 
-        guard abs(clipView.bounds.origin.y - clampedOriginY) > 0.5 else {
+        guard abs(clipView.bounds.origin.y - targetOrigin.y) > 0.1 ||
+            abs(clipView.bounds.origin.x - targetOrigin.x) > 0.1 else {
             return
         }
 
-        clipView.scroll(to: NSPoint(x: clipView.bounds.origin.x, y: clampedOriginY))
+        clipView.scroll(to: targetOrigin)
         scrollView.reflectScrolledClipView(clipView)
+    }
+
+    private func restoreViewportOrigin(_ origin: NSPoint) {
+        let clipView = scrollView.contentView
+        let maxOriginY = max(collectionView.frame.height - clipView.bounds.height, 0)
+        let targetOrigin = pixelAlignedScrollOrigin(
+            x: origin.x,
+            y: origin.y,
+            maxY: maxOriginY
+        )
+
+        guard abs(clipView.bounds.origin.y - targetOrigin.y) > 0.1 ||
+            abs(clipView.bounds.origin.x - targetOrigin.x) > 0.1 else {
+            return
+        }
+
+        clipView.scroll(to: targetOrigin)
+        scrollView.reflectScrolledClipView(clipView)
+    }
+
+    private func shouldPreserveViewportAnchor(for changedIndexPath: IndexPath?, anchor: ViewportAnchor?) -> Bool {
+        guard
+            let anchor,
+            let changedIndexPath
+        else {
+            return false
+        }
+
+        return changedIndexPath.item <= anchor.indexPath.item
     }
 
     private func scrollToTop(anchor: UnitPoint?) {
@@ -865,62 +780,88 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
 
         let maxOriginY = max(collectionView.frame.height - viewportHeight, 0)
-        let clampedOriginY = min(max(targetOriginY, 0), maxOriginY)
+        let targetOrigin = pixelAlignedScrollOrigin(
+            x: clipView.bounds.origin.x,
+            y: targetOriginY,
+            maxY: maxOriginY
+        )
 
-        guard abs(currentOriginY - clampedOriginY) > 0.5 else {
+        guard abs(currentOriginY - targetOrigin.y) > 0.5 else {
             return
         }
 
-        clipView.scroll(to: NSPoint(x: clipView.bounds.origin.x, y: clampedOriginY))
+        clipView.scroll(to: targetOrigin)
         scrollView.reflectScrolledClipView(clipView)
     }
 
     /// Uses the visible hosted-row height as the source of truth for rows that are currently onscreen.
     private func recordMeasuredHeightChange(for itemID: AnyHashable, measuredHeight: CGFloat) {
-        let resolvedHeight = max(configuration.minimumRowHeight, ceil(measuredHeight))
+        let resolvedHeight = max(configuration.minimumRowHeight, measuredHeight)
+        let previousPendingHeight = pendingLiveVisibleHeights[itemID]
         let previousExactHeight = cachedHeights[itemID]
-        let previousLiveHeight = liveVisibleHeights[itemID]
 
         if debugLayoutLoggingEnabled {
             NSLog(
-                "[AppKitScrollView] live-height item=\(String(describing: itemID)) measured=\(Int(resolvedHeight)) cached=\(Int(previousExactHeight ?? -1)) live=\(Int(previousLiveHeight ?? -1))"
+                "[AppKitScrollView] live-height item=\(String(describing: itemID)) measured=\(Int(resolvedHeight)) pending=\(Int(previousPendingHeight ?? -1)) cached=\(Int(previousExactHeight ?? -1))"
             )
         }
 
-        let baselineHeight = previousLiveHeight ?? previousExactHeight ?? resolvedHeight
-        let didChangeVisibleHeight = (previousLiveHeight == nil && previousExactHeight == nil) ||
-            abs(baselineHeight - resolvedHeight) > 1
+        let baselineHeight = previousPendingHeight ?? previousExactHeight ?? resolvedHeight
+        let didChangeVisibleHeight = (previousPendingHeight == nil && previousExactHeight == nil) ||
+            abs(baselineHeight - resolvedHeight) > 0.25
 
         guard didChangeVisibleHeight else {
             return
         }
 
-        liveVisibleHeights[itemID] = resolvedHeight
-        pendingLiveHeightUpdates[itemID] = resolvedHeight
-
-        if previousLiveHeight != nil || (previousExactHeight != nil && abs(resolvedHeight - (previousExactHeight ?? 0)) > 1) {
-            triggerAutomaticAnimatedLayoutIfNeeded(for: itemID, measuredHeight: resolvedHeight)
-        }
-
-        scheduleLiveHeightCommit()
-        scheduleLiveHeightReset(for: itemID)
+        pendingLiveVisibleHeights[itemID] = resolvedHeight
+        startAnimationDisplayLinkIfNeeded()
     }
 
-    private func scheduleLiveHeightReset(for itemID: AnyHashable) {
-        pendingLiveHeightResets[itemID]?.cancel()
-
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-
-            self.pendingLiveHeightResets[itemID] = nil
-            self.liveVisibleHeights.removeValue(forKey: itemID)
-            self.scheduleVisibleMeasurement(forceAll: true)
+    private func flushPendingLiveHeightChanges() {
+        guard !pendingLiveVisibleHeights.isEmpty else {
+            return
         }
 
-        pendingLiveHeightResets[itemID] = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42, execute: workItem)
+        let pendingHeights = pendingLiveVisibleHeights
+        pendingLiveVisibleHeights.removeAll(keepingCapacity: true)
+        let viewportAnchor = makeTopVisibleViewportAnchor()
+        let previousViewportOrigin = scrollView.contentView.bounds.origin
+        var earliestChangedIndexPath: IndexPath?
+        var didChangeAnyHeight = false
+
+        for (itemID, resolvedHeight) in pendingHeights {
+            let previousExactHeight = cachedHeights[itemID]
+            let baselineHeight = previousExactHeight ?? resolvedHeight
+            let didChangeVisibleHeight = previousExactHeight == nil ||
+                abs(baselineHeight - resolvedHeight) > 0.25
+
+            guard didChangeVisibleHeight else {
+                continue
+            }
+
+            cachedHeights[itemID] = resolvedHeight
+            didChangeAnyHeight = true
+
+            if let changedIndexPath = indexPath(for: itemID),
+               earliestChangedIndexPath == nil || changedIndexPath.item < earliestChangedIndexPath!.item {
+                earliestChangedIndexPath = changedIndexPath
+            }
+
+        }
+
+        guard didChangeAnyHeight else {
+            return
+        }
+
+        invalidateLayout()
+        if shouldPreserveViewportAnchor(for: earliestChangedIndexPath, anchor: viewportAnchor) {
+            restoreViewportAnchor(viewportAnchor)
+        } else {
+            restoreViewportOrigin(previousViewportOrigin)
+        }
+        collectionView.needsDisplay = true
+        scrollView.contentView.needsDisplay = true
     }
 
     private func logVisibleLayoutIfNeeded(reason: String) {
@@ -950,7 +891,6 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             let (indexPath, frame) = attributes[index]
             let itemID = items[indexPath.item].id
             let cachedHeight = Int(cachedHeights[itemID] ?? -1)
-            let liveHeight = Int(liveVisibleHeights[itemID] ?? -1)
             let nextGap: Int
 
             if index + 1 < attributes.count {
@@ -961,7 +901,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
             }
 
             NSLog(
-                "[AppKitScrollView] row \(indexPath.item) frameY=\(Int(frame.minY)) height=\(Int(frame.height)) cached=\(cachedHeight) live=\(liveHeight) nextGap=\(nextGap)"
+                "[AppKitScrollView] row \(indexPath.item) frameY=\(Int(frame.minY)) height=\(Int(frame.height)) cached=\(cachedHeight) nextGap=\(nextGap)"
             )
         }
     }
@@ -980,10 +920,7 @@ private final class AppKitScrollViewController: NSViewController, NSCollectionVi
         }
 
         let itemID = items[indexPath.item].id
-        liveVisibleHeights.removeValue(forKey: itemID)
-        pendingLiveHeightUpdates.removeValue(forKey: itemID)
-        pendingLiveHeightResets[itemID]?.cancel()
-        pendingLiveHeightResets[itemID] = nil
+        pendingLiveVisibleHeights.removeValue(forKey: itemID)
     }
 
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {

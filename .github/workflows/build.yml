@@ -21,4 +21,4 @@ jobs:
         run: swift build
 
       - name: Build example app
-        run: xcodebuild -project AppKitCollectionViewDemo.xcodeproj -scheme AppKitCollectionViewDemo -destination "generic/platform=macOS" build CODE_SIGNING_ALLOWED=NO
+        run: xcodebuild -project Example/AppKitCollectionViewDemo.xcodeproj -scheme AppKitCollectionViewDemo -destination "generic/platform=macOS" build CODE_SIGNING_ALLOWED=NO

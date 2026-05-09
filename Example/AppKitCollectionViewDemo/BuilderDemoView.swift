@@ -1,5 +1,12 @@
 import AppKit
+import QuartzCore
 import SwiftUI
+
+private func demoDisplayFrameInterval() -> TimeInterval {
+    let reportedFPS = NSScreen.main?.maximumFramesPerSecond ?? 60
+    let fps = min(max(reportedFPS, 30), 240)
+    return 1.0 / Double(fps)
+}
 
 /// Sample screen that uses the result-builder-backed AppKit scroll view with a heterogeneous 1000-row dataset.
 @available(macOS 15.0, *)
@@ -82,6 +89,11 @@ struct BuilderDemoView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .bottomTrailing) {
+            DemoFPSOverlay()
+                .padding(16)
+                .allowsHitTesting(false)
+        }
     }
 
     private func regenerateRows() {
@@ -255,7 +267,7 @@ private struct BuilderOverviewCard: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("AppKitScrollView { context in ... }")
                             .font(.system(size: 28, weight: .semibold, design: .rounded))
-                        Text("\(rowCount) result-builder rows hosted in an AppKit NSCollectionView. Resize the window, expand disclosures, toggle trends, scroll hard, and pause at the bottom to load \(batchSize) more rows.")
+                        Text("\(rowCount) result-builder rows hosted in an AppKit NSCollectionView. Drag across selectable text to highlight it, press Command-C, resize the window, expand disclosures, toggle trends, scroll hard, and pause at the bottom to load \(batchSize) more rows.")
                             .font(.system(size: 14, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -329,7 +341,7 @@ private struct BuilderLoadMoreCard: View {
     var body: some View {
         let accent = Color(nsColor: .systemGreen)
 
-        DemoSurface(accent: accent) {
+        return DemoSurface(accent: accent) {
             HStack(alignment: .center, spacing: 16) {
                 ProgressView()
                     .controlSize(.small)
@@ -366,19 +378,20 @@ private struct BuilderLongTextCard: View {
                 Text(title)
                     .font(.system(size: 22, weight: .semibold, design: .rounded))
 
-                Text(summary)
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                AppKitSelectableText(summary)
+                    .appKitFont(.systemFont(ofSize: 15, weight: .medium))
+                    .foregroundColor(.secondary)
+                .appKitTextSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
-                        Text("\(index + 1). \(paragraph)")
-                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                        AppKitSelectableText("\(index + 1). \(paragraph)")
+                            .appKitFont(.systemFont(ofSize: 15, weight: .medium))
+                            .foregroundColor(.secondary)
+                        .appKitTextSelection(.enabled)
+                        .appKitTextSelectionOrder(index + 1)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -519,7 +532,15 @@ private struct MetricChip: Identifiable {
 }
 
 private struct TrendSectionHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct DisclosureDetailHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
@@ -568,10 +589,11 @@ private struct ChatBubbleRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(model.message)
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                AppKitSelectableText(model.message)
+                    .appKitFont(.systemFont(ofSize: 15, weight: .medium))
+                    .foregroundColor(.primary)
+                .appKitTextSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
                     ForEach(Array(model.tags.enumerated()), id: \.offset) { _, tag in
@@ -599,20 +621,62 @@ private struct ChatBubbleRow: View {
 
 private struct DisclosurePanelRow: View {
     @ObservedObject var model: DisclosureRowModel
+    @Environment(\.appKitScrollViewContext) private var scrollContext
+
+    @State private var rendersDetails: Bool
+    @State private var detailRevealProgress: CGFloat
+    @State private var detailContentHeight: CGFloat
+    @State private var detailRevealAnimation: DetailRevealAnimation?
+    @State private var detailRevealCleanupTask: Task<Void, Never>?
+
+    private let detailAnimationDuration: TimeInterval = 0.32
+    private var fallbackDetailContentHeight: CGFloat {
+        max(CGFloat(model.details.count) * 34, 44)
+    }
+
+    private struct DetailRevealAnimation {
+        let startDate: Date
+        let startProgress: CGFloat
+        let targetProgress: CGFloat
+    }
+
+    init(model: DisclosureRowModel) {
+        self._model = ObservedObject(wrappedValue: model)
+        let startsExpanded = model.isExpanded
+        _rendersDetails = State(initialValue: startsExpanded)
+        _detailRevealProgress = State(initialValue: startsExpanded ? 1 : 0)
+        _detailContentHeight = State(initialValue: 0)
+    }
 
     var body: some View {
+        TimelineView(.animation(minimumInterval: demoDisplayFrameInterval(), paused: detailRevealAnimation == nil)) { timeline in
+            content(revealProgress: resolvedDetailRevealProgress(at: timeline.date))
+        }
+        .onChange(of: model.isExpanded) { _, isExpanded in
+            applyDetailVisibility(isExpanded)
+        }
+        .onDisappear {
+            detailRevealCleanupTask?.cancel()
+            detailRevealCleanupTask = nil
+            detailRevealAnimation = nil
+        }
+    }
+
+    private func content(revealProgress: CGFloat) -> some View {
         let accent = Color(nsColor: model.accent)
 
-        DemoSurface(accent: accent) {
+        return DemoSurface(accent: accent) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(model.title)
                             .font(.system(size: 23, weight: .semibold, design: .rounded))
-                        Text(model.summary)
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        AppKitSelectableText(model.summary)
+                            .appKitFont(.systemFont(ofSize: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                        .appKitTextSelection(.enabled)
+                        .appKitTextSelectionOrder(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Spacer(minLength: 16)
@@ -622,31 +686,51 @@ private struct DisclosurePanelRow: View {
                         .foregroundStyle(accent)
                 }
 
-                DisclosureGroup(isExpanded: $model.isExpanded) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(Array(model.details.enumerated()), id: \.offset) { index, detail in
-                            HStack(alignment: .top, spacing: 10) {
-                                Circle()
-                                    .fill(accent)
-                                    .frame(width: 7, height: 7)
-                                    .padding(.top, 6)
+                Button {
+                    toggleDisclosure()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: model.isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .frame(width: 10, height: 10)
+                        Text(model.isExpanded ? "Collapse detail section" : "Expand detail section")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.isExpanded ? "Collapse detail section" : "Expand detail section")
 
-                                Text(detail)
-                                    .font(.system(size: 14, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(.leading, CGFloat(index % 2) * 8)
+                if rendersDetails {
+                    let measuredDetails = VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(model.details.enumerated()), id: \.offset) { index, detail in
+                            disclosureDetailRow(detail, index: index, accent: accent)
                         }
                     }
                     .padding(.top, 8)
-                } label: {
-                    Text(model.isExpanded ? "Collapse detail section" : "Expand detail section")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(accent)
+                    .padding(.leading, 16)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: DisclosureDetailHeightPreferenceKey.self, value: proxy.size.height)
+                        }
+                    )
+
+                    measuredDetails
+                        .frame(
+                            height: max(detailContentHeight, fallbackDetailContentHeight) * revealProgress,
+                            alignment: .top
+                        )
+                        .clipped()
+                        .opacity(revealProgress)
+                        .scaleEffect(y: max(0.001, 0.985 + (0.015 * revealProgress)), anchor: .top)
+                        .onPreferenceChange(DisclosureDetailHeightPreferenceKey.self) { height in
+                            guard abs(detailContentHeight - height) > 0.5 else {
+                                return
+                            }
+
+                            detailContentHeight = height
+                        }
                 }
-                .accentColor(accent)
-                .animation(.easeInOut(duration: 0.28), value: model.isExpanded)
 
                 HStack(spacing: 8) {
                     ForEach(Array(model.tags.enumerated()), id: \.offset) { _, tag in
@@ -656,19 +740,116 @@ private struct DisclosurePanelRow: View {
             }
         }
     }
+
+    private func disclosureDetailRow(_ detail: String, index: Int, accent: Color) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(accent)
+                .frame(width: 7, height: 7)
+                .padding(.top, 6)
+
+            AppKitSelectableText(detail)
+                .appKitFont(.systemFont(ofSize: 14, weight: .medium))
+                .foregroundColor(.secondary)
+                .appKitTextSelection(.enabled)
+                .appKitTextSelectionOrder(10 + index)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, CGFloat(index % 2) * 8)
+    }
+
+    private func toggleDisclosure() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model.isExpanded.toggle()
+        }
+    }
+
+    private func applyDetailVisibility(_ isExpanded: Bool) {
+        detailRevealCleanupTask?.cancel()
+        detailRevealCleanupTask = nil
+
+        if isExpanded {
+            if !rendersDetails {
+                rendersDetails = true
+                detailRevealProgress = 0
+                detailContentHeight = max(detailContentHeight, fallbackDetailContentHeight)
+            }
+
+            animateDetailReveal(to: 1)
+            scrollContext?.animateLayout(duration: detailAnimationDuration)
+            return
+        }
+
+        animateDetailReveal(to: 0, removesDetailsWhenComplete: true)
+        scrollContext?.animateLayout(duration: detailAnimationDuration)
+    }
+
+    private func animateDetailReveal(to targetProgress: CGFloat, removesDetailsWhenComplete: Bool = false) {
+        let startDate = Date()
+        let startProgress = resolvedDetailRevealProgress(at: startDate)
+        detailRevealProgress = startProgress
+        detailRevealAnimation = DetailRevealAnimation(
+            startDate: startDate,
+            startProgress: startProgress,
+            targetProgress: targetProgress
+        )
+
+        detailRevealCleanupTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(Int((detailAnimationDuration * 1000).rounded(.up))))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+
+            detailRevealProgress = targetProgress
+            detailRevealAnimation = nil
+
+            if removesDetailsWhenComplete, !model.isExpanded {
+                rendersDetails = false
+            }
+
+            scrollContext?.invalidateLayout()
+            detailRevealCleanupTask = nil
+        }
+    }
+
+    private func resolvedDetailRevealProgress(at date: Date) -> CGFloat {
+        guard let detailRevealAnimation else {
+            return detailRevealProgress
+        }
+
+        let elapsed = date.timeIntervalSince(detailRevealAnimation.startDate)
+        let linearProgress = min(max(elapsed / detailAnimationDuration, 0), 1)
+        let easedProgress = linearProgress * linearProgress * (3 - (2 * linearProgress))
+        return detailRevealAnimation.startProgress +
+            ((detailRevealAnimation.targetProgress - detailRevealAnimation.startProgress) * easedProgress)
+    }
 }
 
 private struct TrendPanelRow: View {
     @ObservedObject var model: TrendRowModel
+    @Environment(\.appKitScrollViewContext) private var scrollContext
 
     @State private var rendersTrendSection: Bool
     @State private var trendRevealProgress: CGFloat
     @State private var trendContentHeight: CGFloat
+    @State private var trendRevealAnimation: TrendRevealAnimation?
     @State private var collapseCleanupTask: Task<Void, Never>?
 
-    private let trendAnimation = Animation.easeInOut(duration: 0.34)
+    private let trendAnimationDuration: TimeInterval = 0.34
     private var fallbackTrendContentHeight: CGFloat {
         max(CGFloat(model.bars.count) * 30 - 8, 44)
+    }
+
+    private struct TrendRevealAnimation {
+        let startDate: Date
+        let startProgress: CGFloat
+        let targetProgress: CGFloat
     }
 
     init(model: TrendRowModel) {
@@ -680,24 +861,40 @@ private struct TrendPanelRow: View {
     }
 
     var body: some View {
+        TimelineView(.animation(minimumInterval: demoDisplayFrameInterval(), paused: trendRevealAnimation == nil)) { timeline in
+            content(revealProgress: resolvedTrendRevealProgress(at: timeline.date))
+        }
+        .onChange(of: model.showsTrend) { _, showsTrend in
+            applyTrendVisibility(showsTrend)
+        }
+        .onDisappear {
+            collapseCleanupTask?.cancel()
+            collapseCleanupTask = nil
+            trendRevealAnimation = nil
+        }
+    }
+
+    private func content(revealProgress: CGFloat) -> some View {
         let accent = Color(nsColor: model.accent)
 
-        DemoSurface(accent: accent) {
+        return DemoSurface(accent: accent) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(model.title)
                             .font(.system(size: 22, weight: .semibold, design: .rounded))
-                        Text(model.subtitle)
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        AppKitSelectableText(model.subtitle)
+                            .appKitFont(.systemFont(ofSize: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                        .appKitTextSelection(.enabled)
+                        .appKitTextSelectionOrder(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Spacer(minLength: 16)
 
                     Button(model.showsTrend ? "Hide Trend" : "Show Trend") {
-                        model.showsTrend.toggle()
+                        toggleTrend()
                     }
                     .buttonStyle(.borderless)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -737,7 +934,7 @@ private struct TrendPanelRow: View {
                                                 .fill(Color.white.opacity(0.08))
                                             Capsule(style: .continuous)
                                                 .fill(accent)
-                                                .frame(width: max(proxy.size.width * value * trendRevealProgress, 0))
+                                                .frame(width: max(proxy.size.width * value * revealProgress, 0))
                                         }
                                     }
                                     .frame(height: 12)
@@ -747,8 +944,8 @@ private struct TrendPanelRow: View {
                                         .foregroundStyle(.secondary)
                                         .frame(width: 32, alignment: .trailing)
                                 }
-                                .opacity(trendRevealProgress)
-                                .offset(y: (1 - trendRevealProgress) * -8)
+                                .opacity(revealProgress)
+                                .offset(y: (1 - revealProgress) * -8)
                             }
                         }
                         .padding(.top, 4)
@@ -759,14 +956,14 @@ private struct TrendPanelRow: View {
                         )
 
                         measuredTrendSection
-                            .padding(.top, 14 * trendRevealProgress)
+                            .padding(.top, 14 * revealProgress)
                             .frame(
-                                height: (max(trendContentHeight, fallbackTrendContentHeight) * trendRevealProgress) + (14 * trendRevealProgress),
+                                height: (max(trendContentHeight, fallbackTrendContentHeight) * revealProgress) + (14 * revealProgress),
                                 alignment: .top
                             )
                             .clipped()
-                            .opacity(trendRevealProgress)
-                            .scaleEffect(y: max(0.001, 0.985 + (0.015 * trendRevealProgress)), anchor: .top)
+                            .opacity(revealProgress)
+                            .scaleEffect(y: max(0.001, 0.985 + (0.015 * revealProgress)), anchor: .top)
                             .onPreferenceChange(TrendSectionHeightPreferenceKey.self) { height in
                                 guard abs(trendContentHeight - height) > 0.5 else {
                                     return
@@ -778,12 +975,13 @@ private struct TrendPanelRow: View {
                 }
             }
         }
-        .onChange(of: model.showsTrend) { _, showsTrend in
-            applyTrendVisibility(showsTrend)
-        }
-        .onDisappear {
-            collapseCleanupTask?.cancel()
-            collapseCleanupTask = nil
+    }
+
+    private func toggleTrend() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model.showsTrend.toggle()
         }
     }
 
@@ -798,30 +996,58 @@ private struct TrendPanelRow: View {
                 trendContentHeight = max(trendContentHeight, fallbackTrendContentHeight)
             }
 
-            withAnimation(trendAnimation) {
-                trendRevealProgress = 1
-            }
+            animateTrendReveal(to: 1)
+            scrollContext?.animateLayout(duration: trendAnimationDuration)
             return
         }
 
-        withAnimation(trendAnimation) {
-            trendRevealProgress = 0
-        }
+        animateTrendReveal(to: 0, removesTrendWhenComplete: true)
+        scrollContext?.animateLayout(duration: trendAnimationDuration)
+    }
+
+    private func animateTrendReveal(to targetProgress: CGFloat, removesTrendWhenComplete: Bool = false) {
+        let startDate = Date()
+        let startProgress = resolvedTrendRevealProgress(at: startDate)
+        trendRevealProgress = startProgress
+        trendRevealAnimation = TrendRevealAnimation(
+            startDate: startDate,
+            startProgress: startProgress,
+            targetProgress: targetProgress
+        )
 
         collapseCleanupTask = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(380))
+                try await Task.sleep(for: .milliseconds(Int((trendAnimationDuration * 1000).rounded(.up))))
             } catch {
                 return
             }
 
-            guard !Task.isCancelled, !model.showsTrend else {
+            guard !Task.isCancelled else {
                 return
             }
 
-            rendersTrendSection = false
-            trendRevealProgress = 0
+            trendRevealProgress = targetProgress
+            trendRevealAnimation = nil
+
+            if removesTrendWhenComplete, !model.showsTrend {
+                rendersTrendSection = false
+            }
+
+            scrollContext?.invalidateLayout()
+            collapseCleanupTask = nil
         }
+    }
+
+    private func resolvedTrendRevealProgress(at date: Date) -> CGFloat {
+        guard let trendRevealAnimation else {
+            return trendRevealProgress
+        }
+
+        let elapsed = date.timeIntervalSince(trendRevealAnimation.startDate)
+        let linearProgress = min(max(elapsed / trendAnimationDuration, 0), 1)
+        let easedProgress = linearProgress * linearProgress * (3 - (2 * linearProgress))
+        return trendRevealAnimation.startProgress +
+            ((trendRevealAnimation.targetProgress - trendRevealAnimation.startProgress) * easedProgress)
     }
 }
 
@@ -830,24 +1056,25 @@ private struct DemoSurface<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+
         content()
             .padding(20)
             .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                accent.opacity(0.12),
-                                Color(nsColor: .controlBackgroundColor)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                shape.fill(
+                    LinearGradient(
+                        colors: [
+                            accent.opacity(0.12),
+                            Color(nsColor: .controlBackgroundColor)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
+                )
             )
+            .clipShape(shape)
             .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(accent.opacity(0.35), lineWidth: 1)
+                shape.strokeBorder(accent.opacity(0.35), lineWidth: 1)
             )
     }
 }
@@ -866,6 +1093,174 @@ private struct DemoTag: View {
                 Capsule(style: .continuous)
                     .fill(accent.opacity(0.12))
             )
+    }
+}
+
+private struct DemoFPSOverlay: View {
+    @State private var displayFPS = 0
+    @State private var swiftUIFPS = 0
+    @State private var swiftUISampleStart = Date()
+    @State private var swiftUIFrameCount = 0
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: demoDisplayFrameInterval())) { timeline in
+            overlayContent
+                .onChange(of: timeline.date) { _, date in
+                    recordSwiftUIFrame(at: date)
+                }
+        }
+        .background {
+            DisplayLinkFPSProbe(fps: $displayFPS)
+                .frame(width: 0, height: 0)
+        }
+        .accessibilityLabel("Frames per second")
+        .accessibilityValue("Display \(displayFPS), SwiftUI \(swiftUIFPS)")
+    }
+
+    private var overlayContent: some View {
+        HStack(spacing: 6) {
+            fpsMetric(label: "Display", fps: displayFPS)
+            Rectangle()
+                .fill(Color.white.opacity(0.16))
+                .frame(width: 1, height: 14)
+            fpsMetric(label: "SwiftUI", fps: swiftUIFPS)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        )
+    }
+
+    private func fpsMetric(label: String, fps: Int) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(fps >= 55 ? Color.green : fps >= 45 ? Color.yellow : Color.red)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text("\(fps)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.primary)
+                .contentTransition(.numericText())
+        }
+    }
+
+    private func recordSwiftUIFrame(at date: Date) {
+        swiftUIFrameCount += 1
+
+        let elapsed = date.timeIntervalSince(swiftUISampleStart)
+        guard elapsed >= 0.5 else {
+            return
+        }
+
+        swiftUIFPS = Int((Double(swiftUIFrameCount) / elapsed).rounded())
+        swiftUIFrameCount = 0
+        swiftUISampleStart = date
+    }
+}
+
+private struct DisplayLinkFPSProbe: NSViewRepresentable {
+    @Binding var fps: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(fps: $fps)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = FPSDisplayLinkHostView(frame: .zero)
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.attach(to: window)
+        }
+        context.coordinator.attach(to: view.window)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.fps = $fps
+        guard let view = nsView as? FPSDisplayLinkHostView else {
+            return
+        }
+
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.attach(to: window)
+        }
+        context.coordinator.attach(to: view.window)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        (nsView as? FPSDisplayLinkHostView)?.onWindowChange = nil
+        coordinator.stop()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var fps: Binding<Int>
+
+        private weak var window: NSWindow?
+        private var displayLink: CADisplayLink?
+        private var sampleStart = CACurrentMediaTime()
+        private var frameCount = 0
+
+        init(fps: Binding<Int>) {
+            self.fps = fps
+        }
+
+        func attach(to window: NSWindow?) {
+            guard self.window !== window else {
+                return
+            }
+
+            stop()
+            self.window = window
+
+            guard let window else {
+                return
+            }
+
+            sampleStart = CACurrentMediaTime()
+            frameCount = 0
+
+            let displayLink = window.displayLink(target: self, selector: #selector(displayLinkDidFire(_:)))
+            displayLink.add(to: .main, forMode: .common)
+            self.displayLink = displayLink
+        }
+
+        func stop() {
+            displayLink?.invalidate()
+            displayLink = nil
+        }
+
+        @objc private func displayLinkDidFire(_ displayLink: CADisplayLink) {
+            frameCount += 1
+
+            let now = displayLink.timestamp > 0 ? displayLink.timestamp : CACurrentMediaTime()
+            let elapsed = now - sampleStart
+            guard elapsed >= 0.5 else {
+                return
+            }
+
+            let sampledFPS = Int((Double(frameCount) / elapsed).rounded())
+            frameCount = 0
+            sampleStart = now
+
+            if fps.wrappedValue != sampledFPS {
+                fps.wrappedValue = sampledFPS
+            }
+        }
+    }
+}
+
+@MainActor
+private final class FPSDisplayLinkHostView: NSView {
+    var onWindowChange: (@MainActor (NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?(window)
     }
 }
 
